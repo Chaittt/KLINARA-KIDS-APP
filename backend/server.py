@@ -776,6 +776,18 @@ async def seed():
 
     # Student
     students = await db.students.find({"parent_phone": parent_phone}).to_list(10)
+    aarav = next((s for s in students if s.get("name") == "Aarav Reddy"), None)
+    if aarav:
+        # Reset Aarav's elthea profile on every startup to avoid test pollution
+        await db.students.update_one(
+            {"id": aarav["id"]},
+            {"$set": {
+                "elthea_grow": {"G": 78, "R": 65, "O": 82, "W": 71},
+                "elthea_archetype_name": "The Explorer",
+                "elthea_archetype_description": "Curious, energetic, and naturally drawn to discovery. Aarav thrives when given space to explore new ideas and environments.",
+                "elthea_last_assessed_at": now_utc() - timedelta(days=7),
+            }},
+        )
     if not students:
         s_id = str(uuid.uuid4())
         await db.students.insert_one({
