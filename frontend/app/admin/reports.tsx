@@ -42,16 +42,14 @@ export default function AdminReports() {
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
-    try {
-      const [a, f, h] = await Promise.all([
-        api<AttRep>('/reports/attendance'),
-        api<FinRep>('/reports/financial'),
-        api<Heatmap>('/reports/heatmap?days=14'),
-      ]);
-      setAtt(a);
-      setFin(f);
-      setHeatmap(h);
-    } catch {}
+    const results = await Promise.allSettled([
+      api<AttRep>('/reports/attendance'),
+      api<FinRep>('/reports/financial'),
+      api<Heatmap>('/reports/heatmap?days=14'),
+    ]);
+    if (results[0].status === 'fulfilled') setAtt(results[0].value);
+    if (results[1].status === 'fulfilled') setFin(results[1].value);
+    if (results[2].status === 'fulfilled') setHeatmap(results[2].value);
   }, []);
   useEffect(() => {
     load();

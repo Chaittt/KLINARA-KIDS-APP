@@ -71,6 +71,14 @@ Backend enforces RBAC on every protected route; token role is the source of trut
 - Parent can only access their own child's data (verified by phone match)
 
 ## Future Enhancements (Smart Business Levers)
-- **Sibling discount + auto-fee reminders** — every overdue payment auto-pings the parent and offers a 5% sibling discount on the second child's fee. Drives both retention and word-of-mouth referrals.
+- **Sibling discount + auto-fee reminders** — every overdue payment auto-pings the parent and offers a 5% sibling discount on the second child's fee.
 - **Elthea archetype share-card** — generate a beautiful share-card image of the child's GROW profile + archetype to share on WhatsApp; turns each parent into a marketing channel.
 - Real Twilio OTP, Razorpay UPI, push notifications via Expo, S3 photo uploads.
+
+## Iteration 2 — Added Features
+- **Today's Schedule** for parents: replaced the parent-home Fees tile with a golden "Today / Schedule →" tile that opens `/parent/schedule`. Shows time-blocked daily schedule with LIVE indicator on the current slot. Schedule is class-based (Mon-Fri = 8 slots, weekends = optional fun club). Endpoint: `GET /api/schedule/today`.
+- **Student detail page** at `/student/{id}` — accessible from admin and teacher student lists. Shows hero card, attendance quick stats, GROW radar chart + archetype, and a **progress timeline** (reverse-chronological merge of activities, milestones like "Joined Klinara" and "Elthea Assessment", plus absent/late marks).
+- **Class-wise attendance heatmap** in admin/MD reports — last 14 days × classes grid with color-coded percentage cells and legend. Endpoint: `GET /api/reports/heatmap?days=N`.
+
+## New Data Models
+- `schedules` — id, class_name, day_of_week (0-6), start_time, end_time, activity, icon
