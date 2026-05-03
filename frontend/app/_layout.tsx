@@ -23,15 +23,17 @@ function RouteGuard() {
       return;
     }
     // Logged in
-    if (!inApp) {
+    const isStaff = user.role === 'teacher' || user.role === 'admin' || user.role === 'md';
+    const allowStudentRoute = isStaff && seg0 === 'student';
+    if (!inApp && !allowStudentRoute) {
       if (user.role === 'parent') router.replace('/parent/home');
       else if (user.role === 'teacher') router.replace('/teacher/students');
       else router.replace('/admin');
-    } else {
+    } else if (inApp) {
       // role mismatch protection
       if (user.role === 'parent' && seg0 !== 'parent') router.replace('/parent/home');
-      if (user.role === 'teacher' && seg0 !== 'teacher') router.replace('/teacher/students');
-      if ((user.role === 'admin' || user.role === 'md') && seg0 !== 'admin') router.replace('/admin');
+      if (user.role === 'teacher' && seg0 !== 'teacher' && seg0 !== 'student') router.replace('/teacher/students');
+      if ((user.role === 'admin' || user.role === 'md') && seg0 !== 'admin' && seg0 !== 'student') router.replace('/admin');
     }
   }, [user, loading, segments]);
 

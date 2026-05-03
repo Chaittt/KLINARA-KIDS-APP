@@ -138,15 +138,18 @@ export default function ParentHome() {
             <Text style={styles.statValue}>{presentPct == null ? '—' : `${presentPct}%`}</Text>
             <Muted style={{ fontSize: 12 }}>Attendance</Muted>
           </Card>
-          <Card style={styles.statCard}>
-            <Ionicons name="card" size={22} color={colors.golden} />
-            <Text style={styles.statValue}>
-              {pendingFees.length > 0
-                ? `₹${pendingFees.reduce((s, p) => s + p.amount, 0).toLocaleString()}`
-                : '✓ Clear'}
-            </Text>
-            <Muted style={{ fontSize: 12 }}>{pendingFees.length > 0 ? 'Pending fees' : 'Fees status'}</Muted>
-          </Card>
+          <TouchableOpacity
+            testID="todays-schedule-btn"
+            activeOpacity={0.8}
+            onPress={() => router.push('/parent/schedule')}
+            style={{ flex: 1 }}
+          >
+            <Card style={[styles.statCard, { backgroundColor: colors.golden, borderColor: colors.golden }]}>
+              <Ionicons name="calendar-clear" size={22} color={colors.inverse} />
+              <Text style={[styles.statValue, { color: colors.inverse }]}>Today</Text>
+              <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.9)', fontWeight: '600' }}>Schedule →</Text>
+            </Card>
+          </TouchableOpacity>
         </View>
 
         {student?.elthea_grow ? (

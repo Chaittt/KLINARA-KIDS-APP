@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 2 — Klinara Kids: Tested 3 new features (Today's Schedule tile, /student/{id} detail, admin heatmap) + iteration 1 regression. Wrote 7 new pytest tests for /api/schedule/today and /api/reports/heatmap (all pass). Found 1 critical regression: /api/reports/financial was missing its FastAPI decorator → 404 → broke entire admin/reports page (Promise.all silently failed, hiding the new heatmap). Fixed by adding @api.get decorator. After fix: 27/27 pytest pass; admin reports page renders Today's Attendance + Financials + Class Attendance — Last 14 Days heatmap. Parent / Admin / Teacher / route-guard frontend flows all verified working.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/reports/financial", "issue": "[FIXED by T1] @api.get(\"/reports/financial\") decorator was missing on the financial_report function (server.py line 693). Returned 404, which cascaded into the frontend admin/reports page rendering blank (Promise.all rejected silently inside a try/catch{}). Added the decorator and verified 200 response.", "priority": "CRITICAL"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "admin/reports page", "issue": "[ROOT CAUSE WAS BACKEND] Page rendered completely blank because Promise.all in load() rejects on the first 404 from /reports/financial; the catch{} swallows the error and leaves att/fin/heatmap all null. Recommendation: replace Promise.all with Promise.allSettled so a single failing endpoint doesn't hide the rest.", "affected_testIDs": ["attendance-report", "financial-report", "heatmap-card"]}
+    ],
+    "design_issues": [
+      {"screen": "/student/{id} (parent home Elthea card too)", "issues": ["Aarav's archetype shows 'TEST_Archetype' / 'TEST description' instead of 'The Explorer' — backend pytest pollutes the seeded student via POST /api/elthea/complete. Iteration 1 already added a startup reset, but pytest re-pollutes after each test run. Either move TestElthea.test_launch_and_complete to a throwaway student, or run seed reset on test teardown."]}
+    ],
+    "react_native_issues": [
+      {"component": "various", "issue": "Pre-existing console deprecation warnings still present: shadow*, props.pointerEvents, Image style.resizeMode. Non-blocking; flagged in iteration 1."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_klinara_api.py",
+    "/app/backend/tests/test_iteration2.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Use Promise.allSettled (or independent try/catch per endpoint) in /app/frontend/app/admin/reports.tsx::load() so one failing endpoint doesn't blank the whole screen.",
+    "Reset Aarav's Elthea profile back to 'The Explorer' (sudo supervisorctl restart backend triggers seed() reset) — currently shows TEST_Archetype after pytest run. Long-term: refactor TestElthea.test_launch_and_complete to create a throwaway student instead of mutating the seeded one.",
+    "(Optional) Add explicit testID='heatmap-card' on the heatmap Card in admin/reports.tsx for stable testing (we matched via heading text 'Class Attendance — Last 14 Days')."
+  ],
+  "critical_code_review_comments": [
+    "admin/reports.tsx uses Promise.all + try/catch{} which is fragile — one 404 hides everything. This iteration's bug shows the cost of that pattern.",
+    "Silent catch blocks (`catch {}`) in load() functions across parent/home.tsx, parent/schedule.tsx, admin/reports.tsx — recommend at least logging via console.error so future regressions surface in dev.",
+    "server.py is now ~1000 lines — split into routers (auth.py, students.py, schedule.py, reports.py) before adding more features. The missing decorator bug would have been caught faster in a smaller file.",
+    "/api/schedule/today returns class_name=null + items=[] for unmapped users (admin/md without class_name). Frontend on parent home only routes parents there so it's fine, but if reused elsewhere should explicitly 404 for non-class roles.",
+    "schedule.tsx has no error state (only Loading… and Day Off!) — if /api/schedule/today fails, the screen is stuck on Loading… forever."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (added missing @api.get(\"/reports/financial\") decorator)",
+    "/app/backend/tests/test_iteration2.py (new — 7 tests for schedule + heatmap)"
+  ],
+  "success_rate": {"backend": "100% (27/27 pytest)", "frontend": "100% (parent schedule, admin/teacher student detail, admin heatmap, parent route-guard all verified)"},
+  "seed_data_creation": "No new seed data created. Backend test_iteration2.py is read-only against existing seed (Aarav + Sunshine class schedules). Pre-seeded weekly schedule for Sunshine (Mon-Fri × 8 slots, Sat/Sun × 1 slot) verified rendering correctly on a Sunday (showed 'Weekend Fun Club (Optional) 10:00–11:00').",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend BASE_URL: https://nursery-dash-1.preview.emergentagent.com. Auth via access_token (Bearer). New iteration-2 endpoints: GET /api/schedule/today (any auth; returns {class_name, date, day_of_week, items[]}) and GET /api/reports/heatmap?days=N (admin/md/teacher only; days clamped 1..60; returns {dates[], rows[{class_name, student_count, cells[{date, pct, present, total}]}]}). Frontend testIDs added in iteration 2: todays-schedule-btn (parent home), schedule-back, sched-{id} (parent/schedule). /student/{id} screen is shared across admin/teacher (parent is redirected via _layout guard). Admin Reports heatmap card lacks an explicit testID — match via text 'Class Attendance — Last 14 Days'. After running pytest, restart backend (sudo supervisorctl restart backend) to reset Aarav's archetype back to 'The Explorer'.",
+  "rca_of_issue": "Critical regression RCA: /api/reports/financial returned 404 because the function `financial_report` was defined in server.py (line 694) without an @api.get decorator. This was a pre-existing endpoint that worked in iteration 1; the decorator was apparently dropped during iteration 2 edits (only the comment '# -------------------- Reports (admin/md) --------------------' remained on line 693). Fix: added `@api.get(\"/reports/financial\")` directly above the function. Cascading effect: admin/reports.tsx awaits Promise.all([attendance, financial, heatmap]) inside try/catch{}; a single rejection caused all three setters to be skipped, leaving the page blank. Reproduction: log in as admin, navigate to /admin/reports — page showed only the 'Reports' header. After fix: all three cards render including the new heatmap with the seeded Sunshine class row. Verified via curl (`curl -H 'Authorization: Bearer ...' /api/reports/financial` → 200) and via browser screenshot showing Today's Attendance + Financials (₹17,400 revenue / ₹8,500 pending / 6 paid / 1 due) + Class Attendance — Last 14 Days heatmap with Sunshine row of color-coded cells."
+}

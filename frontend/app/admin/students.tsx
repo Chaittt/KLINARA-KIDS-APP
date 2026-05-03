@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import { useEffect, useState, useCallback } from 'react';
 import {
   Alert,
@@ -21,6 +22,7 @@ import { colors, radii, spacing } from '../../src/theme';
 type Student = { id: string; name: string; class_name: string; parent_phone: string; age?: number };
 
 export default function AdminStudents() {
+  const router = useRouter();
   const [items, setItems] = useState<Student[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
@@ -117,26 +119,32 @@ export default function AdminStudents() {
           </Card>
         }
         renderItem={({ item }) => (
-          <Card style={styles.row} testID={`student-${item.id}`}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {item.name
-                  .split(' ')
-                  .map((p) => p[0])
-                  .slice(0, 2)
-                  .join('')}
-              </Text>
-            </View>
-            <View style={{ flex: 1, marginLeft: spacing.md }}>
-              <Text style={styles.name}>{item.name}</Text>
-              <Muted style={{ fontSize: 12 }}>
-                {item.class_name} · +91 {item.parent_phone}
-              </Muted>
-            </View>
-            <TouchableOpacity testID={`del-${item.id}`} onPress={() => deleteStudent(item)} hitSlop={10}>
-              <Ionicons name="trash-outline" size={20} color={colors.danger} />
-            </TouchableOpacity>
-          </Card>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => router.push(`/student/${item.id}`)}
+            testID={`student-${item.id}`}
+          >
+            <Card style={styles.row}>
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>
+                  {item.name
+                    .split(' ')
+                    .map((p) => p[0])
+                    .slice(0, 2)
+                    .join('')}
+                </Text>
+              </View>
+              <View style={{ flex: 1, marginLeft: spacing.md }}>
+                <Text style={styles.name}>{item.name}</Text>
+                <Muted style={{ fontSize: 12 }}>
+                  {item.class_name} · +91 {item.parent_phone}
+                </Muted>
+              </View>
+              <TouchableOpacity testID={`del-${item.id}`} onPress={() => deleteStudent(item)} hitSlop={10}>
+                <Ionicons name="trash-outline" size={20} color={colors.danger} />
+              </TouchableOpacity>
+            </Card>
+          </TouchableOpacity>
         )}
       />
 

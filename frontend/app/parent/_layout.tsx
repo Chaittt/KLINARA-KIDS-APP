@@ -55,6 +55,7 @@ export default function ParentLayout() {
         }}
       />
       <Tabs.Screen name="elthea" options={{ href: null }} />
+      <Tabs.Screen name="schedule" options={{ href: null }} />
     </Tabs>
   );
 }

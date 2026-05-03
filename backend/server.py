@@ -621,6 +621,75 @@ async def elthea_complete(body: EltheaCompleteIn, user: dict = Depends(get_curre
     return serialize_student(s)
 
 
+@api.get("/reports/heatmap")
+async def attendance_heatmap(days: int = 14, user: dict = Depends(require_roles("admin", "md", "teacher"))):
+    days = max(1, min(days, 60))
+    today = now_utc().date()
+    date_strs = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days - 1, -1, -1)]
+
+    students = await db.students.find().to_list(2000)
+    # Group students by class
+    by_class: dict = {}
+    for s in students:
+        by_class.setdefault(s.get("class_name") or "Unassigned", []).append(s["id"])
+
+    # Fetch all attendance for date range
+    att = await db.attendance.find({"date": {"$in": date_strs}}).to_list(50000)
+    # index: (student_id, date) -> status
+    idx: dict = {(a["student_id"], a["date"]): a["status"] for a in att}
+
+    rows = []
+    for cls, student_ids in sorted(by_class.items()):
+        cells = []
+        for d in date_strs:
+            present = 0
+            total = 0
+            for sid in student_ids:
+                status = idx.get((sid, d))
+                if status is None:
+                    continue
+                total += 1
+                if status == "present":
+                    present += 1
+            pct = round((present / total) * 100) if total else None
+            cells.append({"date": d, "pct": pct, "present": present, "total": total})
+        rows.append({"class_name": cls, "student_count": len(student_ids), "cells": cells})
+    return {"dates": date_strs, "rows": rows}
+
+
+# -------------------- Schedule --------------------
+def serialize_schedule(s: dict) -> dict:
+    return {
+        "id": s.get("id"),
+        "class_name": s.get("class_name"),
+        "day_of_week": s.get("day_of_week"),  # 0=Mon .. 6=Sun
+        "start_time": s.get("start_time"),
+        "end_time": s.get("end_time"),
+        "activity": s.get("activity"),
+        "icon": s.get("icon"),
+    }
+
+
+@api.get("/schedule/today")
+async def schedule_today(user: dict = Depends(get_current_user)):
+    today_dow = now_utc().weekday()  # 0-6
+    today_str = now_utc().strftime("%A, %d %B")
+    # Determine class
+    class_name: Optional[str] = None
+    if user["role"] == "parent":
+        s = await db.students.find_one({"parent_phone": user.get("phone")})
+        if s:
+            class_name = s.get("class_name")
+    else:
+        teacher = await db.users.find_one({"id": user["id"]})
+        class_name = teacher.get("class_name") if teacher else None
+    items = []
+    if class_name:
+        recs = await db.schedules.find({"class_name": class_name, "day_of_week": today_dow}).sort("start_time", 1).to_list(50)
+        items = [serialize_schedule(r) for r in recs]
+    return {"class_name": class_name, "date": today_str, "day_of_week": today_dow, "items": items}
+
+
 # -------------------- Reports (admin/md) --------------------
 @api.get("/reports/financial")
 async def financial_report(user: dict = Depends(require_roles("admin", "md"))):
@@ -857,6 +926,44 @@ async def seed():
     log.info("Seed complete")
 
 
+async def seed_schedules():
+    """Seed a weekly schedule for the Sunshine class (Mon-Fri) — idempotent."""
+    existing = await db.schedules.count_documents({"class_name": "Sunshine"})
+    if existing > 0:
+        return
+    base = [
+        {"start_time": "09:00", "end_time": "09:30", "activity": "Morning Circle & Songs", "icon": "sunny"},
+        {"start_time": "09:30", "end_time": "10:15", "activity": "Phonics & Storytime", "icon": "book"},
+        {"start_time": "10:15", "end_time": "10:45", "activity": "Healthy Snack", "icon": "nutrition"},
+        {"start_time": "10:45", "end_time": "11:30", "activity": "Arts & Crafts", "icon": "color-palette"},
+        {"start_time": "11:30", "end_time": "12:15", "activity": "Outdoor Play", "icon": "leaf"},
+        {"start_time": "12:15", "end_time": "13:00", "activity": "Lunch & Rest", "icon": "restaurant"},
+        {"start_time": "13:00", "end_time": "13:45", "activity": "Numbers & Puzzles", "icon": "calculator"},
+        {"start_time": "13:45", "end_time": "14:30", "activity": "Music & Movement", "icon": "musical-notes"},
+    ]
+    docs = []
+    for dow in range(0, 5):  # Mon-Fri
+        for b in base:
+            docs.append({
+                "id": str(uuid.uuid4()),
+                "class_name": "Sunshine",
+                "day_of_week": dow,
+                **b,
+            })
+    # Weekend light schedule
+    for dow in (5, 6):
+        docs.append({
+            "id": str(uuid.uuid4()),
+            "class_name": "Sunshine",
+            "day_of_week": dow,
+            "start_time": "10:00",
+            "end_time": "11:00",
+            "activity": "Weekend Fun Club (Optional)",
+            "icon": "happy",
+        })
+    await db.schedules.insert_many(docs)
+
+
 # -------------------- App wiring --------------------
 app.include_router(api)
 
@@ -872,6 +979,7 @@ app.add_middleware(
 @app.on_event("startup")
 async def on_startup():
     await seed()
+    await seed_schedules()
 
 
 @app.on_event("shutdown")

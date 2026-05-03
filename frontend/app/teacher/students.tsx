@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import { useEffect, useState, useCallback } from 'react';
 import { FlatList, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -10,6 +11,7 @@ import { colors, spacing } from '../../src/theme';
 type Student = { id: string; name: string; class_name: string; age?: number };
 
 export default function TeacherStudents() {
+  const router = useRouter();
   const { logout } = useAuth();
   const [students, setStudents] = useState<Student[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -53,25 +55,31 @@ export default function TeacherStudents() {
           </Card>
         }
         renderItem={({ item }) => (
-          <Card style={styles.row} testID={`student-${item.id}`}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {item.name
-                  .split(' ')
-                  .map((p) => p[0])
-                  .slice(0, 2)
-                  .join('')}
-              </Text>
-            </View>
-            <View style={{ flex: 1, marginLeft: spacing.md }}>
-              <Text style={styles.name}>{item.name}</Text>
-              <Muted style={{ fontSize: 12 }}>
-                {item.class_name}
-                {item.age ? ` · ${item.age} yrs` : ''}
-              </Muted>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
-          </Card>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => router.push(`/student/${item.id}`)}
+            testID={`student-${item.id}`}
+          >
+            <Card style={styles.row}>
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>
+                  {item.name
+                    .split(' ')
+                    .map((p) => p[0])
+                    .slice(0, 2)
+                    .join('')}
+                </Text>
+              </View>
+              <View style={{ flex: 1, marginLeft: spacing.md }}>
+                <Text style={styles.name}>{item.name}</Text>
+                <Muted style={{ fontSize: 12 }}>
+                  {item.class_name}
+                  {item.age ? ` · ${item.age} yrs` : ''}
+                </Muted>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+            </Card>
+          </TouchableOpacity>
         )}
       />
     </SafeAreaView>
