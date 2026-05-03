@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 1 — Klinara Kids: Ran 20 pytest backend tests (all passing after 2 MongoDB fixes) and smoke-tested 4 critical frontend flows via Playwright (Parent OTP, Admin, MD, Teacher). All login flows and primary dashboards render correctly with real backend data.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "NOTE (already fixed by T1)", "issue": "Motor client was not tz_aware, causing naive-vs-aware datetime TypeErrors on OTP verify and password reset — fixed by passing tz_aware=True"},
+      {"endpoint": "NOTE (already fixed by T1)", "issue": "POST /api/students auto-creating parent failed with DuplicateKey on email index (explicit email:null + legacy non-sparse index). Fixed by (a) dropping/recreating email index as sparse, (b) omitting email field instead of setting null in create_student and seed"}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "parent/home", "issues": ["Archetype currently shows 'TEST_Archetype' (left over from backend pytest running POST /api/elthea/complete on the seeded student). Main agent should re-seed or skip in tests; or T1 test should use a throwaway student."]}
+    ],
+    "react_native_issues": [
+      {"component": "various", "issue": "Deprecation warnings in console: 'shadow*' style props (use boxShadow), Image style.resizeMode (use props.resizeMode), props.pointerEvents (use style.pointerEvents). Non-blocking but should be cleaned up."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_klinara_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Restore Aarav's original Elthea archetype ('The Explorer') after backend tests polluted it — either re-run seed with reset, or modify /api/elthea/complete test to use a throwaway student.",
+    "(Optional) Clean up deprecated RN style props (shadow*, resizeMode, pointerEvents) to remove console warnings.",
+    "(Optional) Add partialFilterExpression on the users.email index ({email: {$type: 'string'}}) for defense in depth — current sparse index works now that null fields are omitted."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 860 lines — consider splitting into routers (auth.py, students.py, payments.py, etc.) when project grows.",
+    "CORS allow_origins=['*'] with allow_credentials=False is fine for token auth, but lock down to EXPO_PACKAGER_HOSTNAME for prod.",
+    "create_student auto-creates a parent without phone uniqueness enforcement beyond a sparse index — could create dupes if parent was already registered with different casing/whitespace. Consider strip/normalize phone before lookup.",
+    "No rate-limit on /auth/parent/send-otp — a caller could spam OTP generation for any registered phone."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (tz_aware client, drop/recreate email index as sparse, omit email:null on parent auto-create and seed)",
+    "/app/backend/tests/test_klinara_api.py (new)"
+  ],
+  "success_rate": {"backend": "100% (20/20)", "frontend": "100% (4/4 critical flows)"},
+  "seed_data_creation": "Backend tests created a throwaway teacher, student, activity, payment, all cleaned up via DELETE; seeded Aarav's elthea_archetype_name was overwritten to 'TEST_Archetype' by TestElthea.test_launch_and_complete — needs reset.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Auth tokens returned in access_token field (no httpOnly cookies). Parent OTP mock is fixed (123456). Frontend testIDs use '-btn' suffix (NOT '-button') — e.g., role-parent, role-staff, phone-input, send-otp-btn, otp-input, verify-otp-btn, email-input, password-input, login-btn, logout-btn, child-card, grow-card, activity-{id}, stat-students, stat-teachers, stat-parents, stat-pending, monthly-revenue. MD login also routes to /admin (shared dashboard with MD hero card). Backend BASE_URL: https://nursery-dash-1.preview.emergentagent.com.",
+  "rca_of_issue": "Two backend defects found and fixed in this iteration: (1) Motor AsyncIOMotorClient defaults tz_aware=False, so datetimes stored tz-aware were returned naive; comparisons like `rec['expires_at'] < now_utc()` raised TypeError and returned 500 (visible on /api/auth/parent/verify-otp when invalid OTP, and /api/auth/reset-password). Fix: tz_aware=True. (2) users.email unique index was not sparse on the existing DB, and create_student+seed stored email as explicit null; MongoDB treats null as a value, so inserting a second parent failed with DuplicateKey. Fix: drop/recreate index as sparse in seed() + stop writing email:null (omit the key when unknown). Both fixes applied and re-verified."
+}
