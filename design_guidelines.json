@@ -1,0 +1,133 @@
+{
+  "theme": "LIGHT",
+  "archetype": "6 (Vibrant Play)",
+  "design_philosophy": "A warm, friendly, and child-centric mobile app design that feels safe, inviting, and professional. It balances the playful energy of preschool with the clean, trustworthy organization required by parents and school staff.",
+  "colors": {
+    "primary": {
+      "DEFAULT": "#2f6b6b",
+      "description": "Klinara Teal - Core brand color used for primary buttons, prominent headers, and key active states."
+    },
+    "background": {
+      "DEFAULT": "#f5f1e8",
+      "description": "Cream - Universal app background color. Warm and easy on the eyes."
+    },
+    "accent_1": {
+      "DEFAULT": "#d4a574",
+      "description": "Golden - Used for highlights, stars, Elthea GROW chart accents, and secondary actions."
+    },
+    "accent_2": {
+      "DEFAULT": "#d4b896",
+      "description": "Beige - Neutral supportive color for cards, tags, and subtle backgrounds."
+    },
+    "accent_3": {
+      "DEFAULT": "#c49898",
+      "description": "Rose - Used for warnings, alerts, or emotional highlights."
+    },
+    "accent_4": {
+      "DEFAULT": "#ffc2cc",
+      "description": "Blush Pink - Soft pastel highlight for child-friendly UI elements, badges, and avatars."
+    },
+    "surface": {
+      "DEFAULT": "#ffffff",
+      "description": "Pure white for cards and floating components to stand out against the Cream background."
+    },
+    "text": {
+      "primary": "#1a3a3a",
+      "secondary": "#4a6b6b",
+      "inverse": "#ffffff"
+    },
+    "border": {
+      "DEFAULT": "#e5dfd3"
+    }
+  },
+  "typography": {
+    "headings": {
+      "fontFamily": "Playfair Display, Lora, or Merriweather (Serif)",
+      "description": "Used for Screen Titles, Brand marks, and major headers. Conveys the 'Klinara Kids' classic brand."
+    },
+    "body": {
+      "fontFamily": "Nunito, Quicksand, or Rounded Mplus (Sans-serif)",
+      "description": "Clean, highly readable, and friendly sans-serif for all body text, buttons, and inputs."
+    },
+    "sizes": {
+      "h1": "text-3xl font-bold tracking-tight",
+      "h2": "text-2xl font-bold",
+      "h3": "text-xl font-semibold",
+      "body": "text-base",
+      "small": "text-sm",
+      "tiny": "text-xs uppercase tracking-wider"
+    }
+  },
+  "layout_and_spacing": {
+    "container": "px-6 py-4",
+    "gap": {
+      "small": "gap-2",
+      "medium": "gap-4",
+      "large": "gap-6"
+    },
+    "safe_area": "Ensure SafeAreaView is used on all screens to prevent overlap with notches."
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-[#2f6b6b] text-white rounded-full py-4 px-6 items-center justify-center shadow-sm",
+      "secondary": "bg-[#d4a574] text-white rounded-full py-4 px-6 items-center justify-center shadow-sm",
+      "outline": "border-2 border-[#2f6b6b] text-[#2f6b6b] rounded-full py-4 px-6 items-center justify-center",
+      "rules": [
+        "Equal-sized buttons on selection screens (e.g., Parent vs Staff role selection).",
+        "Always rounded-full for a friendly, soft look."
+      ]
+    },
+    "cards": {
+      "default": "bg-white rounded-3xl p-5 shadow-sm border border-[#e5dfd3]",
+      "rules": [
+        "Use generous padding (p-5 or p-6).",
+        "Soft shadows (elevation: 2 on Android, shadowOpacity: 0.05 on iOS).",
+        "Rounded corners must be prominent (borderRadius: 24)."
+      ]
+    },
+    "inputs": {
+      "default": "bg-white border border-[#e5dfd3] rounded-2xl px-5 py-4 text-base text-[#1a3a3a]",
+      "focused": "border-[#2f6b6b] bg-[#f5f1e8]/30",
+      "rules": [
+        "Light background, subtle borders.",
+        "Round corners (borderRadius: 16)."
+      ]
+    },
+    "grow_chart": {
+      "description": "Elthea AI Assessment Chart. A beautiful, smooth radial or horizontal bar chart.",
+      "colors": ["#d4a574", "#c49898", "#ffc2cc", "#2f6b6b"],
+      "style": "Rounded bar caps, soft gradients if possible, playful but clear data representation."
+    }
+  },
+  "screens": {
+    "role_selection": {
+      "layout": "Centered content. Logo at the top, welcome text, followed by two large, equal-sized square or wide buttons for 'Parent' and 'School Staff'."
+    },
+    "parent_dashboard": {
+      "layout": "Vertical scroll. Welcome Header -> Child Profile Header Card -> GROW Chart Summary Card -> Quick Actions (Attendance, Fees) -> Recent Activities Feed."
+    },
+    "activity_feed": {
+      "card_style": "Image taking full width of the card, rounded top corners, caption and date below in a white padded area."
+    }
+  },
+  "media": {
+    "logos": {
+      "brand_logo": "https://customer-assets.emergentagent.com/job_a4a69bab-76bd-4aab-b87e-1d820620930f/artifacts/5n8sfahc_logo.jpeg",
+      "brand_mark": "https://customer-assets.emergentagent.com/job_a4a69bab-76bd-4aab-b87e-1d820620930f/artifacts/xyhk4obm_name.jpeg"
+    },
+    "images": {
+      "activity_1": "https://images.unsplash.com/photo-1777056491418-d4ff81a4ad92?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1ODh8MHwxfHNlYXJjaHwyfHxwcmVzY2hvb2wlMjBjaGlsZCUyMHBsYXlpbmd8ZW58MHx8fHwxNzc3ODAxODc1fDA&ixlib=rb-4.1.0&q=85",
+      "activity_2": "https://images.unsplash.com/photo-1633219664515-2441564d0cc4?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1ODh8MHwxfHNlYXJjaHwxfHxwcmVzY2hvb2wlMjBjaGlsZCUyMHBsYXlpbmd8ZW58MHx8fHwxNzc3ODAxODc1fDA&ixlib=rb-4.1.0&q=85",
+      "activity_3": "https://images.unsplash.com/photo-1759678444821-565ff103465c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1ODh8MHwxfHNlYXJjaHw0fHxwcmVzY2hvb2wlMjBjaGlsZCUyMHBsYXlpbmd8ZW58MHx8fHwxNzc3ODAxODc1fDA&ixlib=rb-4.1.0&q=85",
+      "teacher_1": "https://images.unsplash.com/photo-1583468991267-3f068b607ae1?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2MDV8MHwxfHNlYXJjaHwyfHxraW5kZXJnYXJ0ZW4lMjB0ZWFjaGVyfGVufDB8fHx8MTc3NzgwMTg3NXww&ixlib=rb-4.1.0&q=85",
+      "art_1": "https://images.unsplash.com/photo-1774820270820-c110a39e26f1?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NTJ8MHwxfHNlYXJjaHwxfHxjaGlsZCUyMGFydCUyMGFuZCUyMGNyYWZ0fGVufDB8fHx8MTc3NzgwMTg3NXww&ixlib=rb-4.1.0&q=85"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Use standard React Native StyleSheet or NativeWind/Tailwind depending on setup, but rigidly follow the provided hex codes.",
+    "Implement navigation using Expo Router or React Navigation.",
+    "Make sure UI components (Buttons, Inputs, Cards) are exported as reusable React Native components.",
+    "Add 'data-testid' to all interactive components like buttons, inputs, and list items for robust automated testing.",
+    "For the Elthea AI GROW assessment, if a charting library is needed, use `react-native-svg` or `react-native-chart-kit` and customize it with pastel colors from the palette."
+  ]
+}
