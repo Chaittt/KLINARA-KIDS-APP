@@ -1,11 +1,8 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../src/theme';
-import { useAuth } from '../../src/auth';
 
 export default function AdminLayout() {
-  const { user } = useAuth();
-  const isMD = user?.role === 'md';
   return (
     <Tabs
       screenOptions={{
@@ -61,7 +58,6 @@ export default function AdminLayout() {
         name="setup"
         options={{
           title: 'Setup',
-          href: isMD ? '/admin/setup' : null,
           tabBarIcon: ({ color, size }) => <Ionicons name="settings" size={size} color={color} />,
         }}
       />

@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../src/api';
+import { useAuth } from '../../src/auth';
 import { Button, Card, H2, H3, Input, Muted } from '../../src/ui';
 import { colors, radii, spacing } from '../../src/theme';
 
@@ -23,6 +24,8 @@ type Student = { id: string; name: string; class_name: string; parent_phone: str
 
 export default function AdminStudents() {
   const router = useRouter();
+  const { user } = useAuth();
+  const isMD = user?.role === 'md';
   const [items, setItems] = useState<Student[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
@@ -102,7 +105,10 @@ export default function AdminStudents() {
           <H2>Students</H2>
           <Muted>{items.length} total</Muted>
         </View>
-        <TouchableOpacity testID="add-student-btn" style={styles.addBtn} onPress={() => setShowAdd(true)}>
+        <TouchableOpacity testID="add-student-btn" style={[styles.addBtn, !isMD && { opacity: 0.3 }]} onPress={() => {
+          if (!isMD) return Alert.alert('MD only', 'Only the MD can add new students.');
+          setShowAdd(true);
+        }}>
           <Ionicons name="add" size={22} color={colors.inverse} />
           <Text style={styles.addBtnText}>Add</Text>
         </TouchableOpacity>
@@ -140,8 +146,11 @@ export default function AdminStudents() {
                   {item.class_name} · +91 {item.parent_phone}
                 </Muted>
               </View>
-              <TouchableOpacity testID={`del-${item.id}`} onPress={() => deleteStudent(item)} hitSlop={10}>
-                <Ionicons name="trash-outline" size={20} color={colors.danger} />
+              <TouchableOpacity testID={`del-${item.id}`} onPress={() => {
+                if (!isMD) return Alert.alert('MD only', 'Only the MD can delete students.');
+                deleteStudent(item);
+              }} hitSlop={10}>
+                <Ionicons name="trash-outline" size={20} color={isMD ? colors.danger : colors.textMuted} />
               </TouchableOpacity>
             </Card>
           </TouchableOpacity>

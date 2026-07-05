@@ -15,12 +15,15 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../src/api';
+import { useAuth } from '../../src/auth';
 import { Button, Card, H2, H3, Input, Muted } from '../../src/ui';
 import { colors, radii, spacing } from '../../src/theme';
 
 type Teacher = { id: string; name: string; email: string; class_name?: string };
 
 export default function AdminTeachers() {
+  const { user } = useAuth();
+  const isMD = user?.role === 'md';
   const [items, setItems] = useState<Teacher[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
@@ -95,7 +98,10 @@ export default function AdminTeachers() {
           <H2>Teachers</H2>
           <Muted>{items.length} on staff</Muted>
         </View>
-        <TouchableOpacity testID="add-teacher-btn" style={styles.addBtn} onPress={() => setShowAdd(true)}>
+        <TouchableOpacity testID="add-teacher-btn" style={[styles.addBtn, !isMD && { opacity: 0.3 }]} onPress={() => {
+          if (!isMD) return Alert.alert('MD only', 'Only the MD can add teachers.');
+          setShowAdd(true);
+        }}>
           <Ionicons name="add" size={22} color={colors.inverse} />
           <Text style={styles.addBtnText}>Add</Text>
         </TouchableOpacity>
@@ -123,8 +129,11 @@ export default function AdminTeachers() {
                 {item.class_name ? ` · ${item.class_name}` : ''}
               </Muted>
             </View>
-            <TouchableOpacity testID={`del-t-${item.id}`} onPress={() => del(item)} hitSlop={10}>
-              <Ionicons name="trash-outline" size={20} color={colors.danger} />
+            <TouchableOpacity testID={`del-t-${item.id}`} onPress={() => {
+              if (!isMD) return Alert.alert('MD only', 'Only the MD can delete teachers.');
+              del(item);
+            }} hitSlop={10}>
+              <Ionicons name="trash-outline" size={20} color={isMD ? colors.danger : colors.textMuted} />
             </TouchableOpacity>
           </Card>
         )}

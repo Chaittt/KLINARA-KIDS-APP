@@ -58,6 +58,7 @@ export default function ParentLayout() {
       <Tabs.Screen name="schedule" options={{ href: null }} />
       <Tabs.Screen name="complaint" options={{ href: null }} />
       <Tabs.Screen name="homework" options={{ href: null }} />
+      <Tabs.Screen name="announcements" options={{ href: null }} />
     </Tabs>
   );
 }

@@ -370,7 +370,7 @@ async def create_student(body: StudentIn, user: dict = Depends(require_roles("ad
 
 
 @api.put("/students/{student_id}")
-async def update_student(student_id: str, body: StudentUpdate, user: dict = Depends(require_roles("admin", "md"))):
+async def update_student(student_id: str, body: StudentUpdate, user: dict = Depends(require_roles("md"))):
     update = {k: v for k, v in body.dict().items() if v is not None}
     if not update:
         raise HTTPException(status_code=400, detail="Nothing to update")
@@ -382,7 +382,7 @@ async def update_student(student_id: str, body: StudentUpdate, user: dict = Depe
 
 
 @api.delete("/students/{student_id}")
-async def delete_student(student_id: str, user: dict = Depends(require_roles("admin", "md"))):
+async def delete_student(student_id: str, user: dict = Depends(require_roles("md"))):
     res = await db.students.delete_one({"id": student_id})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Student not found")
@@ -397,7 +397,7 @@ async def list_teachers(user: dict = Depends(require_roles("admin", "md"))):
 
 
 @api.post("/teachers")
-async def create_teacher(body: TeacherIn, user: dict = Depends(require_roles("admin", "md"))):
+async def create_teacher(body: TeacherIn, user: dict = Depends(require_roles("md"))):
     email = body.email.lower().strip()
     if await db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Email already exists")
@@ -416,10 +416,49 @@ async def create_teacher(body: TeacherIn, user: dict = Depends(require_roles("ad
 
 
 @api.delete("/teachers/{teacher_id}")
-async def delete_teacher(teacher_id: str, user: dict = Depends(require_roles("admin", "md"))):
+async def delete_teacher(teacher_id: str, user: dict = Depends(require_roles("md"))):
     res = await db.users.delete_one({"id": teacher_id, "role": "teacher"})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Teacher not found")
+    return {"message": "Deleted"}
+
+
+# -------------------- Admins (MD only) --------------------
+class AdminIn(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+
+
+@api.get("/admins")
+async def list_admins(user: dict = Depends(require_roles("md", "admin"))):
+    admins = await db.users.find({"role": "admin"}, {"_id": 0, "password_hash": 0}).to_list(200)
+    return [serialize_user(a) for a in admins]
+
+
+@api.post("/admins")
+async def create_admin(body: AdminIn, user: dict = Depends(require_roles("md"))):
+    email = body.email.lower().strip()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email already exists")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "name": body.name,
+        "email": email,
+        "phone": None,
+        "password_hash": hash_password(body.password),
+        "role": "admin",
+        "created_at": now_utc(),
+    }
+    await db.users.insert_one(doc)
+    return serialize_user(doc)
+
+
+@api.delete("/admins/{admin_id}")
+async def delete_admin(admin_id: str, user: dict = Depends(require_roles("md"))):
+    res = await db.users.delete_one({"id": admin_id, "role": "admin"})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Admin not found")
     return {"message": "Deleted"}
 
 
@@ -837,6 +876,38 @@ async def upsert_academic_year(class_name: str, body: AcademicYearIn, user: dict
         upsert=True,
     )
     return {"class_name": class_name, **body.dict()}
+
+
+# -------------------- Curriculum (admin/md) --------------------
+class CurriculumIn(BaseModel):
+    year_label: str
+    content: str
+
+
+@api.get("/curriculum")
+async def list_curriculum(user: dict = Depends(get_current_user)):
+    items = await db.curriculum.find().to_list(200)
+    return [{
+        "class_name": it["class_name"],
+        "year_label": it.get("year_label", ""),
+        "content": it.get("content", ""),
+        "updated_at": it.get("updated_at").isoformat() if it.get("updated_at") else None,
+    } for it in items]
+
+
+@api.put("/curriculum/{class_name}")
+async def upsert_curriculum(class_name: str, body: CurriculumIn, user: dict = Depends(require_roles("admin", "md"))):
+    await db.curriculum.update_one(
+        {"class_name": class_name},
+        {"$set": {
+            "class_name": class_name,
+            "year_label": body.year_label,
+            "content": body.content,
+            "updated_at": now_utc(),
+        }},
+        upsert=True,
+    )
+    return {"class_name": class_name, "year_label": body.year_label, "content": body.content}
 
 
 # -------------------- Events --------------------

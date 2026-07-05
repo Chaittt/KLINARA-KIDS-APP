@@ -52,6 +52,7 @@ export default function ParentHome() {
   const [pendingFees, setPendingFees] = useState<Payment[]>([]);
   const [presentPct, setPresentPct] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [annCount, setAnnCount] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -68,6 +69,10 @@ export default function ParentHome() {
         const pays = await api<Payment[]>(`/payments/student/${s.id}`);
         setPendingFees(pays.filter((p) => p.status === 'pending'));
       }
+      try {
+        const anns = await api<any[]>('/announcements');
+        setAnnCount(anns.length);
+      } catch {}
     } catch (e) {
       // ignore
     }
@@ -94,9 +99,24 @@ export default function ParentHome() {
             <Muted>Welcome back</Muted>
             <H2 style={{ marginTop: 2 }}>{user?.name?.split(' ')[0] || 'Parent'} 👋</H2>
           </View>
-          <TouchableOpacity testID="logout-btn" onPress={logout} style={styles.iconBtn}>
-            <Ionicons name="log-out-outline" size={22} color={colors.text} />
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity
+              testID="bell-btn"
+              onPress={() => router.push('/parent/announcements')}
+              style={styles.iconBtn}
+              hitSlop={10}
+            >
+              <Ionicons name="notifications-outline" size={22} color={colors.text} />
+              {annCount > 0 ? (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>{annCount > 9 ? '9+' : annCount}</Text>
+                </View>
+              ) : null}
+            </TouchableOpacity>
+            <TouchableOpacity testID="logout-btn" onPress={logout} style={styles.iconBtn}>
+              <Ionicons name="log-out-outline" size={22} color={colors.text} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         {student ? (
@@ -230,6 +250,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
+  badge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: colors.danger,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: colors.surface,
+  },
+  badgeText: { color: colors.inverse, fontSize: 10, fontWeight: '700' },
   childCard: { marginBottom: spacing.md, backgroundColor: colors.primary },
   childRow: { flexDirection: 'row', alignItems: 'center' },
   avatar: {
