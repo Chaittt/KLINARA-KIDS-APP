@@ -36,8 +36,22 @@ export default function TeacherLayout() {
       <Tabs.Screen
         name="upload"
         options={{
-          title: 'Upload',
+          title: 'Activity',
           tabBarIcon: ({ color, size }) => <Ionicons name="cloud-upload" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="homework"
+        options={{
+          title: 'Homework',
+          tabBarIcon: ({ color, size }) => <Ionicons name="book" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="schedule"
+        options={{
+          title: 'Schedule',
+          tabBarIcon: ({ color, size }) => <Ionicons name="calendar" size={size} color={color} />,
         }}
       />
     </Tabs>

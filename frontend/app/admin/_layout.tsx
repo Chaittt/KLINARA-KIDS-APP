@@ -1,8 +1,11 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../src/theme';
+import { useAuth } from '../../src/auth';
 
 export default function AdminLayout() {
+  const { user } = useAuth();
+  const isMD = user?.role === 'md';
   return (
     <Tabs
       screenOptions={{
@@ -16,7 +19,7 @@ export default function AdminLayout() {
           paddingBottom: 8,
           paddingTop: 6,
         },
-        tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
+        tabBarLabelStyle: { fontSize: 10, fontWeight: '600' },
       }}
     >
       <Tabs.Screen
@@ -34,17 +37,17 @@ export default function AdminLayout() {
         }}
       />
       <Tabs.Screen
-        name="teachers"
+        name="announcements"
         options={{
-          title: 'Teachers',
-          tabBarIcon: ({ color, size }) => <Ionicons name="school" size={size} color={color} />,
+          title: 'Announce',
+          tabBarIcon: ({ color, size }) => <Ionicons name="megaphone" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
-        name="fees"
+        name="complaints"
         options={{
-          title: 'Fees',
-          tabBarIcon: ({ color, size }) => <Ionicons name="cash" size={size} color={color} />,
+          title: 'Complaints',
+          tabBarIcon: ({ color, size }) => <Ionicons name="chatbubbles" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -54,6 +57,18 @@ export default function AdminLayout() {
           tabBarIcon: ({ color, size }) => <Ionicons name="bar-chart" size={size} color={color} />,
         }}
       />
+      <Tabs.Screen
+        name="setup"
+        options={{
+          title: 'Setup',
+          href: isMD ? '/admin/setup' : null,
+          tabBarIcon: ({ color, size }) => <Ionicons name="settings" size={size} color={color} />,
+        }}
+      />
+      {/* Hidden routes accessible from Dashboard */}
+      <Tabs.Screen name="teachers" options={{ href: null }} />
+      <Tabs.Screen name="fees" options={{ href: null }} />
+      <Tabs.Screen name="staff-attendance" options={{ href: null }} />
     </Tabs>
   );
 }

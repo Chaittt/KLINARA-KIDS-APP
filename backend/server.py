@@ -752,6 +752,452 @@ async def overview(user: dict = Depends(require_roles("admin", "md"))):
     }
 
 
+# -------------------- Salaries (MD only) --------------------
+class SalaryIn(BaseModel):
+    monthly_amount: float
+    currency: str = "INR"
+    notes: Optional[str] = None
+
+
+@api.get("/salaries")
+async def list_salaries(user: dict = Depends(require_roles("md"))):
+    staff = await db.users.find({"role": {"$in": ["teacher", "admin"]}}, {"_id": 0, "password_hash": 0}).to_list(500)
+    sal = {s["user_id"]: s for s in await db.salaries.find().to_list(1000)}
+    out = []
+    for u in staff:
+        s = sal.get(u["id"], {})
+        out.append({
+            "user": serialize_user(u) | {"class_name": u.get("class_name")},
+            "monthly_amount": s.get("monthly_amount"),
+            "currency": s.get("currency", "INR"),
+            "notes": s.get("notes"),
+        })
+    return out
+
+
+@api.put("/salaries/{user_id}")
+async def set_salary(user_id: str, body: SalaryIn, user: dict = Depends(require_roles("md"))):
+    target = await db.users.find_one({"id": user_id})
+    if not target or target.get("role") not in ["teacher", "admin"]:
+        raise HTTPException(status_code=404, detail="Staff member not found")
+    await db.salaries.update_one(
+        {"user_id": user_id},
+        {"$set": {"user_id": user_id, "monthly_amount": body.monthly_amount, "currency": body.currency, "notes": body.notes, "updated_at": now_utc()}},
+        upsert=True,
+    )
+    return {"message": "Salary updated", "monthly_amount": body.monthly_amount, "currency": body.currency}
+
+
+# -------------------- Fee Structure --------------------
+class FeeStructureIn(BaseModel):
+    monthly_amount: float
+
+
+@api.get("/fee-structure")
+async def list_fee_structure(user: dict = Depends(get_current_user)):
+    items = await db.fee_structure.find().to_list(200)
+    return [{"class_name": it["class_name"], "monthly_amount": it["monthly_amount"]} for it in items]
+
+
+@api.put("/fee-structure/{class_name}")
+async def upsert_fee_structure(class_name: str, body: FeeStructureIn, user: dict = Depends(require_roles("md", "admin"))):
+    await db.fee_structure.update_one(
+        {"class_name": class_name},
+        {"$set": {"class_name": class_name, "monthly_amount": body.monthly_amount, "updated_at": now_utc()}},
+        upsert=True,
+    )
+    return {"class_name": class_name, "monthly_amount": body.monthly_amount}
+
+
+# -------------------- Academic Year --------------------
+class AcademicYearIn(BaseModel):
+    year_label: str
+    start_date: str
+    end_date: str
+    notes: Optional[str] = None
+
+
+@api.get("/academic-year")
+async def list_academic_years(user: dict = Depends(get_current_user)):
+    items = await db.academic_years.find().to_list(200)
+    return [{
+        "class_name": it["class_name"],
+        "year_label": it.get("year_label"),
+        "start_date": it.get("start_date"),
+        "end_date": it.get("end_date"),
+        "notes": it.get("notes"),
+    } for it in items]
+
+
+@api.put("/academic-year/{class_name}")
+async def upsert_academic_year(class_name: str, body: AcademicYearIn, user: dict = Depends(require_roles("md", "admin"))):
+    await db.academic_years.update_one(
+        {"class_name": class_name},
+        {"$set": {"class_name": class_name, **body.dict(), "updated_at": now_utc()}},
+        upsert=True,
+    )
+    return {"class_name": class_name, **body.dict()}
+
+
+# -------------------- Events --------------------
+class EventIn(BaseModel):
+    title: str
+    description: str
+    date: str
+    class_name: Optional[str] = None
+
+
+def serialize_event(e: dict) -> dict:
+    return {
+        "id": e.get("id"),
+        "title": e.get("title"),
+        "description": e.get("description"),
+        "date": e.get("date"),
+        "class_name": e.get("class_name"),
+        "created_at": e.get("created_at").isoformat() if e.get("created_at") else None,
+    }
+
+
+@api.get("/events/this-week")
+async def events_this_week(user: dict = Depends(get_current_user)):
+    today = now_utc().date()
+    end = today + timedelta(days=7)
+    items = await db.events.find({"date": {"$gte": today.strftime("%Y-%m-%d"), "$lte": end.strftime("%Y-%m-%d")}}).sort("date", 1).to_list(200)
+    return [serialize_event(e) for e in items]
+
+
+@api.post("/events")
+async def create_event(body: EventIn, user: dict = Depends(require_roles("md", "admin"))):
+    doc = {"id": str(uuid.uuid4()), "created_by": user["id"], "created_at": now_utc(), **body.dict()}
+    await db.events.insert_one(doc)
+    return serialize_event(doc)
+
+
+@api.delete("/events/{event_id}")
+async def delete_event(event_id: str, user: dict = Depends(require_roles("md", "admin"))):
+    res = await db.events.delete_one({"id": event_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return {"message": "Deleted"}
+
+
+# -------------------- Homework --------------------
+class HomeworkIn(BaseModel):
+    class_name: str
+    title: str
+    description: str
+    due_date: Optional[str] = None
+    attachment_base64: Optional[str] = None
+
+
+def serialize_homework(h: dict) -> dict:
+    return {
+        "id": h.get("id"),
+        "class_name": h.get("class_name"),
+        "title": h.get("title"),
+        "description": h.get("description"),
+        "due_date": h.get("due_date"),
+        "attachment_base64": h.get("attachment_base64"),
+        "uploader_name": h.get("uploader_name"),
+        "created_at": h.get("created_at").isoformat() if h.get("created_at") else None,
+    }
+
+
+@api.get("/homework")
+async def list_homework(user: dict = Depends(get_current_user)):
+    if user["role"] == "parent":
+        s = await db.students.find_one({"parent_phone": user.get("phone")})
+        if not s:
+            return []
+        items = await db.homework.find({"class_name": s.get("class_name")}).sort("created_at", -1).to_list(100)
+    elif user["role"] == "teacher":
+        u = await db.users.find_one({"id": user["id"]})
+        cls = u.get("class_name") if u else None
+        q = {"class_name": cls} if cls else {}
+        items = await db.homework.find(q).sort("created_at", -1).to_list(100)
+    else:
+        items = await db.homework.find().sort("created_at", -1).to_list(200)
+    return [serialize_homework(h) for h in items]
+
+
+@api.post("/homework")
+async def create_homework(body: HomeworkIn, user: dict = Depends(require_roles("teacher", "admin", "md"))):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "uploaded_by": user["id"],
+        "uploader_name": user["name"],
+        "created_at": now_utc(),
+        **body.dict(),
+    }
+    await db.homework.insert_one(doc)
+    return serialize_homework(doc)
+
+
+@api.delete("/homework/{hw_id}")
+async def delete_homework(hw_id: str, user: dict = Depends(require_roles("teacher", "admin", "md"))):
+    res = await db.homework.delete_one({"id": hw_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"message": "Deleted"}
+
+
+# -------------------- Announcements --------------------
+class AnnouncementIn(BaseModel):
+    title: str
+    description: str
+    photos_base64: List[str] = []
+    class_name: Optional[str] = None
+
+
+def serialize_announcement(a: dict) -> dict:
+    return {
+        "id": a.get("id"),
+        "title": a.get("title"),
+        "description": a.get("description"),
+        "photos_base64": a.get("photos_base64", []),
+        "class_name": a.get("class_name"),
+        "uploader_name": a.get("uploader_name"),
+        "created_at": a.get("created_at").isoformat() if a.get("created_at") else None,
+    }
+
+
+@api.get("/announcements")
+async def list_announcements(user: dict = Depends(get_current_user)):
+    items = await db.announcements.find().sort("created_at", -1).to_list(100)
+    return [serialize_announcement(a) for a in items]
+
+
+@api.post("/announcements")
+async def create_announcement(body: AnnouncementIn, user: dict = Depends(require_roles("admin", "md"))):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "uploaded_by": user["id"],
+        "uploader_name": user["name"],
+        "created_at": now_utc(),
+        **body.dict(),
+    }
+    await db.announcements.insert_one(doc)
+    return serialize_announcement(doc)
+
+
+@api.delete("/announcements/{ann_id}")
+async def delete_announcement(ann_id: str, user: dict = Depends(require_roles("admin", "md"))):
+    res = await db.announcements.delete_one({"id": ann_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"message": "Deleted"}
+
+
+# -------------------- Complaints --------------------
+class ComplaintIn(BaseModel):
+    student_id: str
+    subject: str
+    description: str
+
+
+def serialize_complaint(c: dict) -> dict:
+    return {
+        "id": c.get("id"),
+        "parent_id": c.get("parent_id"),
+        "parent_name": c.get("parent_name"),
+        "student_id": c.get("student_id"),
+        "student_name": c.get("student_name"),
+        "subject": c.get("subject"),
+        "description": c.get("description"),
+        "status": c.get("status"),
+        "resolution_note": c.get("resolution_note"),
+        "created_at": c.get("created_at").isoformat() if c.get("created_at") else None,
+        "resolved_at": c.get("resolved_at").isoformat() if c.get("resolved_at") else None,
+    }
+
+
+@api.post("/complaints")
+async def create_complaint(body: ComplaintIn, user: dict = Depends(require_roles("parent"))):
+    s = await db.students.find_one({"id": body.student_id})
+    if not s or s.get("parent_phone") != user.get("phone"):
+        raise HTTPException(status_code=403, detail="Not your child")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "parent_id": user["id"],
+        "parent_name": user["name"],
+        "student_id": body.student_id,
+        "student_name": s.get("name"),
+        "subject": body.subject,
+        "description": body.description,
+        "status": "open",
+        "resolution_note": None,
+        "created_at": now_utc(),
+        "resolved_at": None,
+    }
+    await db.complaints.insert_one(doc)
+    return serialize_complaint(doc)
+
+
+@api.get("/complaints")
+async def list_complaints(user: dict = Depends(get_current_user)):
+    if user["role"] == "parent":
+        items = await db.complaints.find({"parent_id": user["id"]}).sort("created_at", -1).to_list(200)
+    elif user["role"] in ("admin", "md"):
+        items = await db.complaints.find().sort("created_at", -1).to_list(500)
+    else:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return [serialize_complaint(c) for c in items]
+
+
+@api.post("/complaints/{cid}/resolve")
+async def resolve_complaint(cid: str, note: str = "", user: dict = Depends(require_roles("admin", "md"))):
+    res = await db.complaints.update_one(
+        {"id": cid},
+        {"$set": {"status": "resolved", "resolved_at": now_utc(), "resolved_by": user["id"], "resolution_note": note}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Not found")
+    c = await db.complaints.find_one({"id": cid})
+    return serialize_complaint(c)
+
+
+# -------------------- Staff Attendance --------------------
+class StaffAttendanceIn(BaseModel):
+    user_id: str
+    date: str
+    status: Literal["present", "absent"]
+
+
+def serialize_staff_att(a: dict) -> dict:
+    return {
+        "id": a.get("id"),
+        "user_id": a.get("user_id"),
+        "date": a.get("date"),
+        "status": a.get("status"),
+        "marked_by": a.get("marked_by"),
+    }
+
+
+@api.post("/staff-attendance")
+async def mark_staff_attendance(body: StaffAttendanceIn, user: dict = Depends(require_roles("admin", "md"))):
+    existing = await db.staff_attendance.find_one({"user_id": body.user_id, "date": body.date})
+    if existing:
+        await db.staff_attendance.update_one({"id": existing["id"]}, {"$set": {"status": body.status, "marked_by": user["id"]}})
+        r = await db.staff_attendance.find_one({"id": existing["id"]})
+        return serialize_staff_att(r)
+    doc = {"id": str(uuid.uuid4()), "user_id": body.user_id, "date": body.date, "status": body.status, "marked_by": user["id"], "created_at": now_utc()}
+    await db.staff_attendance.insert_one(doc)
+    return serialize_staff_att(doc)
+
+
+@api.get("/staff-attendance/today")
+async def staff_attendance_today(user: dict = Depends(require_roles("admin", "md"))):
+    today = now_utc().strftime("%Y-%m-%d")
+    staff = await db.users.find({"role": {"$in": ["teacher", "admin"]}}, {"_id": 0, "password_hash": 0}).to_list(500)
+    marks = {a["user_id"]: a["status"] for a in await db.staff_attendance.find({"date": today}).to_list(500)}
+    out = [{
+        **serialize_user(s),
+        "class_name": s.get("class_name"),
+        "status": marks.get(s["id"]),
+    } for s in staff]
+    present = sum(1 for x in out if x["status"] == "present")
+    absent = sum(1 for x in out if x["status"] == "absent")
+    return {"date": today, "present": present, "absent": absent, "unmarked": len(out) - present - absent, "total": len(out), "staff": out}
+
+
+# -------------------- Class occupancy --------------------
+@api.get("/stats/class-occupancy")
+async def class_occupancy(user: dict = Depends(require_roles("md", "admin"))):
+    students = await db.students.find().to_list(2000)
+    by_class: dict = {}
+    for s in students:
+        cls = s.get("class_name") or "Unassigned"
+        by_class[cls] = by_class.get(cls, 0) + 1
+    return [{"class_name": k, "count": v} for k, v in sorted(by_class.items())]
+
+
+# -------------------- MD fee views --------------------
+@api.get("/reports/fees-by-class")
+async def fees_by_class(user: dict = Depends(require_roles("md"))):
+    students = await db.students.find().to_list(2000)
+    stud_map = {s["id"]: s for s in students}
+    pays = await db.payments.find().to_list(5000)
+    by_class: dict = {}
+    for p in pays:
+        s = stud_map.get(p["student_id"])
+        cls = (s or {}).get("class_name") or "Unassigned"
+        b = by_class.setdefault(cls, {"paid": 0.0, "pending": 0.0, "paid_count": 0, "pending_count": 0})
+        if p["status"] == "paid":
+            b["paid"] += p["amount"]
+            b["paid_count"] += 1
+        else:
+            b["pending"] += p["amount"]
+            b["pending_count"] += 1
+    return [{"class_name": k, **v} for k, v in sorted(by_class.items())]
+
+
+@api.get("/students/{student_id}/fees-summary")
+async def student_fees_summary(student_id: str, user: dict = Depends(require_roles("md"))):
+    s = await db.students.find_one({"id": student_id})
+    if not s:
+        raise HTTPException(status_code=404, detail="Not found")
+    pays = await db.payments.find({"student_id": student_id}).sort("created_at", -1).to_list(200)
+    paid = sum(p["amount"] for p in pays if p["status"] == "paid")
+    pending = sum(p["amount"] for p in pays if p["status"] == "pending")
+    return {
+        "student": serialize_student(s),
+        "total_paid": paid,
+        "total_pending": pending,
+        "payments": [serialize_payment(p) for p in pays],
+    }
+
+
+# -------------------- Razorpay (mocked) --------------------
+class RazorpayInitIn(BaseModel):
+    student_id: str
+    amount: float
+    description: Optional[str] = "Monthly Fee"
+
+
+class RazorpayVerifyIn(BaseModel):
+    payment_id: str
+    razorpay_order_id: str
+    razorpay_payment_id: Optional[str] = None
+    razorpay_signature: Optional[str] = None
+
+
+@api.post("/payments/razorpay/initiate")
+async def razorpay_initiate(body: RazorpayInitIn, user: dict = Depends(get_current_user)):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "student_id": body.student_id,
+        "amount": body.amount,
+        "status": "pending",
+        "transaction_id": None,
+        "description": body.description or "Monthly Fee",
+        "gateway": "razorpay",
+        "created_at": now_utc(),
+        "paid_at": None,
+    }
+    await db.payments.insert_one(doc)
+    return {
+        "payment": serialize_payment(doc),
+        "razorpay_order_id": f"order_MOCK_{uuid.uuid4().hex[:12]}",
+        "razorpay_key_id": "rzp_test_MOCKED",
+        "amount_paise": int(body.amount * 100),
+        "currency": "INR",
+    }
+
+
+@api.post("/payments/razorpay/verify")
+async def razorpay_verify(body: RazorpayVerifyIn, user: dict = Depends(get_current_user)):
+    p = await db.payments.find_one({"id": body.payment_id})
+    if not p:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    txn = body.razorpay_payment_id or f"pay_MOCK_{uuid.uuid4().hex[:12]}"
+    await db.payments.update_one(
+        {"id": body.payment_id},
+        {"$set": {"status": "paid", "transaction_id": txn, "razorpay_order_id": body.razorpay_order_id, "paid_at": now_utc()}},
+    )
+    p = await db.payments.find_one({"id": body.payment_id})
+    return serialize_payment(p)
+
+
 # -------------------- Health --------------------
 @api.get("/")
 async def root():
@@ -964,6 +1410,77 @@ async def seed_schedules():
     await db.schedules.insert_many(docs)
 
 
+async def seed_extras():
+    """Seed fee structure, academic years, salaries, sample events/announcements/homework."""
+    # Fee structure
+    if await db.fee_structure.count_documents({}) == 0:
+        for cls, amt in [("Playgroup", 6500), ("Nursery", 7500), ("LKG", 8500), ("UKG", 9500), ("Sunshine", 8500)]:
+            await db.fee_structure.insert_one({"class_name": cls, "monthly_amount": amt, "updated_at": now_utc()})
+
+    # Academic years (per-class group)
+    if await db.academic_years.count_documents({}) == 0:
+        for cls in ["Playgroup", "Nursery", "LKG", "UKG", "Sunshine"]:
+            await db.academic_years.insert_one({
+                "class_name": cls,
+                "year_label": "2026-27",
+                "start_date": "2026-06-15",
+                "end_date": "2027-04-15",
+                "notes": f"Academic session for {cls}",
+                "updated_at": now_utc(),
+            })
+
+    # Salaries (seed for existing staff if not set)
+    staff_defaults = {"teacher": 35000, "admin": 45000}
+    staff = await db.users.find({"role": {"$in": ["teacher", "admin"]}}).to_list(500)
+    for s in staff:
+        if not await db.salaries.find_one({"user_id": s["id"]}):
+            await db.salaries.insert_one({
+                "user_id": s["id"],
+                "monthly_amount": staff_defaults.get(s["role"], 30000),
+                "currency": "INR",
+                "notes": None,
+                "updated_at": now_utc(),
+            })
+
+    # Events this week
+    if await db.events.count_documents({}) == 0:
+        base = now_utc().date()
+        events = [
+            {"title": "Sports Day Practice", "description": "All students to wear house colors", "date": (base + timedelta(days=1)).strftime("%Y-%m-%d")},
+            {"title": "Story Reading Circle", "description": "Special guest storyteller visit", "date": (base + timedelta(days=3)).strftime("%Y-%m-%d")},
+            {"title": "Parent-Teacher Meeting", "description": "Term 1 progress discussion", "date": (base + timedelta(days=5)).strftime("%Y-%m-%d")},
+        ]
+        for e in events:
+            await db.events.insert_one({"id": str(uuid.uuid4()), "created_by": "seed", "created_at": now_utc(), "class_name": None, **e})
+
+    # Announcements
+    if await db.announcements.count_documents({}) == 0:
+        await db.announcements.insert_one({
+            "id": str(uuid.uuid4()),
+            "title": "Welcome back to a new week!",
+            "description": "This week we celebrate creativity — art and craft themes daily. Please send an old t-shirt for painting Wednesday.",
+            "photos_base64": [],
+            "class_name": None,
+            "uploaded_by": "seed",
+            "uploader_name": "Dr. Meera Iyer",
+            "created_at": now_utc() - timedelta(hours=6),
+        })
+
+    # Homework
+    if await db.homework.count_documents({}) == 0:
+        await db.homework.insert_one({
+            "id": str(uuid.uuid4()),
+            "class_name": "Sunshine",
+            "title": "Color the Rainbow",
+            "description": "Color the rainbow worksheet using the primary colors we learned today. Bring it back tomorrow!",
+            "due_date": (now_utc().date() + timedelta(days=1)).strftime("%Y-%m-%d"),
+            "attachment_base64": None,
+            "uploaded_by": "seed",
+            "uploader_name": "Ms. Priya Sharma",
+            "created_at": now_utc() - timedelta(hours=3),
+        })
+
+
 # -------------------- App wiring --------------------
 app.include_router(api)
 
@@ -980,6 +1497,7 @@ app.add_middleware(
 async def on_startup():
     await seed()
     await seed_schedules()
+    await seed_extras()
 
 
 @app.on_event("shutdown")
