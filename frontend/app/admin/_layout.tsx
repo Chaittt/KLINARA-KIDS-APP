@@ -65,6 +65,7 @@ export default function AdminLayout() {
       <Tabs.Screen name="teachers" options={{ href: null }} />
       <Tabs.Screen name="fees" options={{ href: null }} />
       <Tabs.Screen name="staff-attendance" options={{ href: null }} />
+      <Tabs.Screen name="payment-verifications" options={{ href: null }} />
     </Tabs>
   );
 }
