@@ -17,6 +17,8 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
 
+from twilio_otp import parent_phone_is_registered, start_verification, check_verification
+
 
 # -------------------- Setup --------------------
 mongo_url = os.environ["MONGO_URL"]
@@ -241,41 +243,44 @@ async def reset_password(body: ResetPasswordIn):
 async def parent_send_otp(body: SendOtpIn):
     phone = body.phone.strip()
     user = await db.users.find_one({"phone": phone, "role": "parent"})
-    if not user:
+    linked_student = await db.students.find_one({"parent_phone": phone})
+
+    if not parent_phone_is_registered(bool(user), bool(linked_student)):
         raise HTTPException(status_code=404, detail="Phone number not registered")
 
-    # Use mock OTP from env, but always allow real generation in DB
-    mock_otp = os.environ.get("MOCK_OTP", "123456")
-    await db.otps.update_one(
-        {"phone": phone},
-        {"$set": {
+    # If a student is linked to this phone but no parent account exists yet
+    # (e.g. parent_phone was set via a student update rather than student creation),
+    # create the parent account now so verify-otp can find it afterwards.
+    if not user and linked_student:
+        parent_id = str(uuid.uuid4())
+        await db.users.insert_one({
+            "id": parent_id,
+            "name": f"Parent of {linked_student.get('name', 'Student')}",
             "phone": phone,
-            "otp": mock_otp,
-            "expires_at": now_utc() + timedelta(seconds=OTP_TTL_SECONDS),
-            "attempts": 0,
+            "password_hash": None,
+            "role": "parent",
             "created_at": now_utc(),
-        }},
-        upsert=True,
-    )
-    log.info(f"[MOCK OTP] OTP for {phone}: {mock_otp}")
-    return {"message": "OTP sent successfully", "debug_otp": mock_otp, "expires_in": OTP_TTL_SECONDS}
+        })
+        if not linked_student.get("parent_id"):
+            await db.students.update_one({"id": linked_student["id"]}, {"$set": {"parent_id": parent_id}})
+
+    sent = start_verification(phone)
+    if not sent:
+        raise HTTPException(status_code=502, detail="Failed to send OTP. Please try again.")
+
+    response = {"message": "OTP sent successfully"}
+    if os.environ.get("MOCK_OTP"):
+        response["debug_otp"] = os.environ["MOCK_OTP"]
+    return response
 
 
 @api.post("/auth/parent/verify-otp")
 async def parent_verify_otp(body: VerifyOtpIn):
     phone = body.phone.strip()
-    rec = await db.otps.find_one({"phone": phone})
-    if not rec:
-        raise HTTPException(status_code=400, detail="No OTP sent for this phone")
-    if rec["expires_at"] < now_utc():
-        raise HTTPException(status_code=400, detail="OTP expired")
-    if rec.get("attempts", 0) >= OTP_MAX_ATTEMPTS:
-        raise HTTPException(status_code=429, detail="Too many attempts. Please request a new OTP.")
-    if rec["otp"] != body.otp.strip():
-        await db.otps.update_one({"phone": phone}, {"$inc": {"attempts": 1}})
-        raise HTTPException(status_code=401, detail="Invalid OTP")
+    approved = check_verification(phone, body.otp)
+    if not approved:
+        raise HTTPException(status_code=401, detail="Invalid or expired OTP")
 
-    await db.otps.delete_one({"phone": phone})
     user = await db.users.find_one({"phone": phone, "role": "parent"})
     if not user:
         raise HTTPException(status_code=404, detail="Parent not found")
@@ -374,6 +379,24 @@ async def update_student(student_id: str, body: StudentUpdate, user: dict = Depe
     update = {k: v for k, v in body.dict().items() if v is not None}
     if not update:
         raise HTTPException(status_code=400, detail="Nothing to update")
+
+    if "parent_phone" in update:
+        parent = await db.users.find_one({"phone": update["parent_phone"], "role": "parent"})
+        if not parent:
+            parent_id = str(uuid.uuid4())
+            student = await db.students.find_one({"id": student_id})
+            await db.users.insert_one({
+                "id": parent_id,
+                "name": f"Parent of {student.get('name', 'Student') if student else 'Student'}",
+                "phone": update["parent_phone"],
+                "password_hash": None,
+                "role": "parent",
+                "created_at": now_utc(),
+            })
+        else:
+            parent_id = parent["id"]
+        update["parent_id"] = parent_id
+
     res = await db.students.update_one({"id": student_id}, {"$set": update})
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Student not found")

@@ -1,0 +1,21 @@
+renikuntachaitanya4_db_user
+41atcgwJi8Lk8gVG
+49.37.155.160   
+
+python -m pip install "pymongo[srv]"
+
+mongodb+srv://renikuntachaitanya4_db_user:41atcgwJi8Lk8gVG@cluster0.9psvalv.mongodb.net/klinara_kidsappName=Cluster0
+
+Twillio 
+Service SID - VA898e672a532f1fdac3ee9c9611d03f73
+
+cd backend
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+
+uvicorn server:app --host 0.0.0.0 --port 8001 --reload
+
+npm install
+
+npx expo start
