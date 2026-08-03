@@ -51,6 +51,11 @@ export default function AdminSetup() {
   const [sAge, setSAge] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const [upiId, setUpiId] = useState('');
+  const [upiName, setUpiName] = useState('');
+  const [upiModal, setUpiModal] = useState(false);
+  const [savingUpi, setSavingUpi] = useState(false);
+
   const load = useCallback(async () => {
     const r = await Promise.allSettled([
       api<FeeItem[]>('/fee-structure'),
@@ -60,6 +65,7 @@ export default function AdminSetup() {
       api<Curriculum[]>('/curriculum'),
       api<AdminUser[]>('/admins'),
       api<TeacherUser[]>('/teachers'),
+      api<{ upi_id: string; upi_name: string }>('/settings/upi'),
     ]);
     if (r[0].status === 'fulfilled') setFees(r[0].value);
     if (r[1].status === 'fulfilled') setSalaries(r[1].value);
@@ -68,6 +74,7 @@ export default function AdminSetup() {
     if (r[4].status === 'fulfilled') setCurricula(r[4].value);
     if (r[5].status === 'fulfilled') setAdmins(r[5].value);
     if (r[6].status === 'fulfilled') setTeachers(r[6].value);
+    if (r[7].status === 'fulfilled') { setUpiId(r[7].value.upi_id); setUpiName(r[7].value.upi_name); }
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -111,6 +118,17 @@ export default function AdminSetup() {
   }
 
   function resetStaffForm() { setSName(''); setSEmail(''); setSPwd(''); setSClass(''); setSPhone(''); setSAge(''); }
+
+  async function saveUpi() {
+    if (!upiId.includes('@') || upiId.length < 5) return Alert.alert('Invalid UPI ID', 'Should look like name@bank');
+    setSavingUpi(true);
+    try {
+      await api('/settings/upi', { method: 'PUT', body: { upi_id: upiId.trim(), upi_name: upiName.trim() || 'Klinara Kids' } });
+      setUpiModal(false);
+      Alert.alert('Saved', 'UPI details updated. Parents will use these for fee payments.');
+      await load();
+    } catch (e: any) { Alert.alert('Error', e?.message || 'Failed'); } finally { setSavingUpi(false); }
+  }
 
   async function saveStaff() {
     if (!staffModal) return;
@@ -227,6 +245,24 @@ export default function AdminSetup() {
                 <Muted style={{ fontSize: 11 }}>{t.class_name || t.email}</Muted>
               </View>
             ))}
+          </Card>
+        ) : null}
+
+        {/* Fee Structure — MD only */}
+        {isMD ? (
+          <Card style={{ marginBottom: spacing.md }} testID="upi-settings-card">
+            <H3>UPI Payment Settings</H3>
+            <Muted style={{ marginTop: 4 }}>Parents will pay to this UPI ID for fees</Muted>
+            <View style={styles.upiRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.upiIdText}>{upiId || 'Not set'}</Text>
+                <Muted style={{ fontSize: 11 }}>{upiName || 'Klinara Kids'}</Muted>
+              </View>
+              <TouchableOpacity testID="edit-upi" onPress={() => setUpiModal(true)} style={styles.smallBtn}>
+                <Ionicons name="pencil" size={14} color={colors.inverse} />
+                <Text style={{ color: colors.inverse, fontWeight: '700', fontSize: 12 }}>Edit</Text>
+              </TouchableOpacity>
+            </View>
           </Card>
         ) : null}
 
@@ -378,6 +414,36 @@ export default function AdminSetup() {
           </ScrollView>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* UPI Settings modal */}
+      <Modal visible={upiModal} animationType="slide" transparent>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBg}>
+          <ScrollView contentContainerStyle={{ padding: spacing.lg }} keyboardShouldPersistTaps="handled">
+            <Card>
+              <H3>UPI Payment Settings</H3>
+              <Muted style={{ marginTop: 4 }}>Parents will scan a QR / see this ID when paying school fees.</Muted>
+              <Input
+                testID="upi-id-input"
+                label="UPI ID"
+                value={upiId}
+                onChangeText={setUpiId}
+                autoCapitalize="none"
+                placeholder="e.g. klinarakids@upi"
+                containerStyle={{ marginTop: spacing.md }}
+              />
+              <Input
+                testID="upi-name-input"
+                label="Payee Name"
+                value={upiName}
+                onChangeText={setUpiName}
+                placeholder="Klinara Kids"
+              />
+              <Button testID="save-upi" title="Save UPI Details" onPress={saveUpi} loading={savingUpi} />
+              <Button title="Cancel" variant="ghost" onPress={() => setUpiModal(false)} style={{ marginTop: 8 }} />
+            </Card>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -415,4 +481,11 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border,
   },
   qaText: { fontSize: 12, fontWeight: '700', color: colors.text, textAlign: 'center' },
+  upiRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    marginTop: spacing.md, padding: spacing.md,
+    backgroundColor: colors.background, borderRadius: radii.md,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  upiIdText: { fontSize: 16, fontWeight: '700', color: colors.text },
 });

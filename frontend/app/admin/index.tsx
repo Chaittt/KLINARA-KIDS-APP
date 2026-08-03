@@ -28,6 +28,7 @@ type StaffToday = { date: string; present: number; absent: number; unmarked: num
 type Complaint = { id: string; status: string };
 type EventItem = { id: string; title: string; date: string; description: string };
 type Announcement = { id: string; title: string; description: string; created_at: string };
+type PendingPay = { id: string; amount: number };
 
 export default function AdminDashboard() {
   const { user, logout } = useAuth();
@@ -38,6 +39,7 @@ export default function AdminDashboard() {
   const [openComplaints, setOpenComplaints] = useState(0);
   const [events, setEvents] = useState<EventItem[]>([]);
   const [ann, setAnn] = useState<Announcement[]>([]);
+  const [pendingPays, setPendingPays] = useState<PendingPay[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
@@ -48,6 +50,7 @@ export default function AdminDashboard() {
       api<Complaint[]>('/complaints'),
       api<EventItem[]>('/events/this-week'),
       api<Announcement[]>('/announcements'),
+      api<PendingPay[]>('/payments/pending-verification'),
     ]);
     if (r[0].status === 'fulfilled') setOverview(r[0].value);
     if (r[1].status === 'fulfilled') setFin(r[1].value);
@@ -55,6 +58,7 @@ export default function AdminDashboard() {
     if (r[3].status === 'fulfilled') setOpenComplaints(r[3].value.filter((c) => c.status === 'open').length);
     if (r[4].status === 'fulfilled') setEvents(r[4].value);
     if (r[5].status === 'fulfilled') setAnn(r[5].value.slice(0, 2));
+    if (r[6].status === 'fulfilled') setPendingPays(r[6].value);
   }, []);
 
   useEffect(() => {
@@ -163,6 +167,32 @@ export default function AdminDashboard() {
             onPress={() => router.push('/admin/announcements')}
           />
         </View>
+
+        {/* Payments to Verify — highlighted when pending */}
+        <TouchableOpacity
+          testID="payments-verify-tile"
+          activeOpacity={0.85}
+          onPress={() => router.push('/admin/payment-verifications')}
+        >
+          <Card style={[styles.verifyCard, pendingPays.length > 0 && styles.verifyCardActive]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <View style={[styles.verifyIcon, pendingPays.length > 0 && { backgroundColor: 'rgba(255,255,255,0.2)' }]}>
+                <Ionicons name="cash-outline" size={22} color={pendingPays.length > 0 ? colors.inverse : colors.primary} />
+              </View>
+              <View style={{ flex: 1, marginLeft: spacing.md }}>
+                <Text style={[styles.verifyTitle, pendingPays.length > 0 && { color: colors.inverse }]}>
+                  UPI Payments to Verify
+                </Text>
+                <Text style={[styles.verifySub, pendingPays.length > 0 && { color: 'rgba(255,255,255,0.85)' }]}>
+                  {pendingPays.length === 0
+                    ? 'No pending verifications'
+                    : `${pendingPays.length} awaiting · ₹${pendingPays.reduce((s, p) => s + p.amount, 0).toLocaleString()}`}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={22} color={pendingPays.length > 0 ? colors.inverse : colors.textMuted} />
+            </View>
+          </Card>
+        </TouchableOpacity>
 
         {/* Events This Week */}
         <Card style={{ marginTop: spacing.md }} testID="events-card">
@@ -323,4 +353,12 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
   },
   manageBtnText: { color: colors.inverse, fontWeight: '700', fontSize: 12 },
+  verifyCard: { marginBottom: spacing.md },
+  verifyCardActive: { backgroundColor: colors.golden },
+  verifyIcon: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: colors.blush, alignItems: 'center', justifyContent: 'center',
+  },
+  verifyTitle: { fontSize: 15, fontWeight: '700', color: colors.text },
+  verifySub: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
 });
