@@ -575,6 +575,12 @@ def serialize_payment(p: dict) -> dict:
         "status": p.get("status"),
         "transaction_id": p.get("transaction_id"),
         "description": p.get("description"),
+        "utr": p.get("utr"),
+        "method": p.get("method"),
+        "submitted_at": p.get("submitted_at").isoformat() if p.get("submitted_at") else None,
+        "verified_by": p.get("verified_by"),
+        "verified_at": p.get("verified_at").isoformat() if p.get("verified_at") else None,
+        "reject_reason": p.get("reject_reason"),
         "created_at": p.get("created_at").isoformat() if p.get("created_at") else None,
         "paid_at": p.get("paid_at").isoformat() if p.get("paid_at") else None,
     }
@@ -626,6 +632,119 @@ async def list_student_payments(student_id: str, user: dict = Depends(get_curren
 async def list_all_payments(user: dict = Depends(require_roles("admin", "md"))):
     recs = await db.payments.find().sort("created_at", -1).to_list(1000)
     return [serialize_payment(r) for r in recs]
+
+
+# -------------------- Settings & Manual UPI --------------------
+class UpiSettingsIn(BaseModel):
+    upi_id: str
+    upi_name: Optional[str] = None
+
+
+@api.get("/settings/upi")
+async def get_upi_settings(user: dict = Depends(get_current_user)):
+    doc = await db.settings.find_one({"key": "upi"})
+    if not doc:
+        return {"upi_id": "klinarakids@upi", "upi_name": "Klinara Kids"}
+    return {"upi_id": doc.get("upi_id", ""), "upi_name": doc.get("upi_name", "Klinara Kids")}
+
+
+@api.put("/settings/upi")
+async def set_upi_settings(body: UpiSettingsIn, user: dict = Depends(require_roles("md"))):
+    upi_id = body.upi_id.strip()
+    if "@" not in upi_id or len(upi_id) < 5:
+        raise HTTPException(status_code=400, detail="Invalid UPI ID (should look like name@bank)")
+    upi_name = (body.upi_name or "Klinara Kids").strip()
+    await db.settings.update_one(
+        {"key": "upi"},
+        {"$set": {"key": "upi", "upi_id": upi_id, "upi_name": upi_name, "updated_at": now_utc()}},
+        upsert=True,
+    )
+    return {"upi_id": upi_id, "upi_name": upi_name}
+
+
+class SubmitUpiIn(BaseModel):
+    utr: str
+
+
+@api.post("/payments/{payment_id}/submit-upi")
+async def submit_upi_payment(payment_id: str, body: SubmitUpiIn, user: dict = Depends(get_current_user)):
+    p = await db.payments.find_one({"id": payment_id})
+    if not p:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    # Parent can only submit for their own child
+    if user["role"] == "parent":
+        s = await db.students.find_one({"id": p["student_id"]})
+        if not s or s.get("parent_phone") != user.get("phone"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+    if p.get("status") == "paid":
+        raise HTTPException(status_code=400, detail="Payment already marked paid")
+    utr = body.utr.strip().upper()
+    if len(utr) < 6 or not utr.replace(" ", "").isalnum():
+        raise HTTPException(status_code=400, detail="UTR must be at least 6 alphanumeric characters")
+    await db.payments.update_one(
+        {"id": payment_id},
+        {"$set": {
+            "status": "pending_verification",
+            "utr": utr,
+            "method": "upi",
+            "submitted_at": now_utc(),
+            "submitted_by": user.get("id"),
+        }},
+    )
+    p = await db.payments.find_one({"id": payment_id})
+    return serialize_payment(p)
+
+
+class VerifyIn(BaseModel):
+    approve: bool = True
+    reason: Optional[str] = None
+
+
+@api.post("/payments/{payment_id}/verify")
+async def verify_upi_payment(payment_id: str, body: VerifyIn, user: dict = Depends(require_roles("admin", "md"))):
+    p = await db.payments.find_one({"id": payment_id})
+    if not p:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    if p.get("status") not in ("pending_verification", "pending"):
+        raise HTTPException(status_code=400, detail=f"Cannot verify a payment in status '{p.get('status')}'")
+    if body.approve:
+        txn = p.get("utr") or f"MANUAL{uuid.uuid4().hex[:8].upper()}"
+        await db.payments.update_one(
+            {"id": payment_id},
+            {"$set": {
+                "status": "paid",
+                "transaction_id": txn,
+                "verified_by": user.get("id"),
+                "verified_at": now_utc(),
+                "paid_at": now_utc(),
+                "reject_reason": None,
+            }},
+        )
+    else:
+        await db.payments.update_one(
+            {"id": payment_id},
+            {"$set": {
+                "status": "pending",
+                "utr": None,
+                "reject_reason": (body.reason or "Verification failed").strip(),
+                "verified_by": user.get("id"),
+                "verified_at": now_utc(),
+            }},
+        )
+    p = await db.payments.find_one({"id": payment_id})
+    return serialize_payment(p)
+
+
+@api.get("/payments/pending-verification")
+async def list_pending_verifications(user: dict = Depends(require_roles("admin", "md"))):
+    recs = await db.payments.find({"status": "pending_verification"}).sort("submitted_at", -1).to_list(500)
+    result = []
+    for p in recs:
+        student = await db.students.find_one({"id": p["student_id"]}, {"_id": 0, "name": 1, "class_name": 1, "parent_phone": 1})
+        item = serialize_payment(p)
+        item["student"] = student or {}
+        result.append(item)
+    return result
 
 
 # -------------------- Elthea (mocked) --------------------
