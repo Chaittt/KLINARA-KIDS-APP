@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "frontend",
-    "slug": "frontend",
+    "name": "Klinara Kids",
+    "slug": "klinara-kids",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -10,7 +10,12 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.nurserydash.qnzmux"
+      "bundleIdentifier": "com.klinarakids.app",
+      "buildNumber": "1.0.0",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Klinara Kids needs camera access so teachers can capture and upload photos of student activities.",
+        "NSPhotoLibraryUsageDescription": "Klinara Kids needs photo library access so teachers can attach existing photos to student records."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -18,7 +23,11 @@
         "backgroundColor": "#f5f1e8"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.emergent.nurserydash.qnzmux"
+      "package": "com.klinarakids.app",
+      "versionCode": 1,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -37,10 +46,23 @@
         }
       ],
       "expo-web-browser",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Klinara Kids needs photo library access to attach photos to student records.",
+          "cameraPermission": "Klinara Kids needs camera access to capture photos of student activities."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "2ef29272-4819-4c1b-9ef0-b9b496d998fd"
+      }
     }
   }
 }
