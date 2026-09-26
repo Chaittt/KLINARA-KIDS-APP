@@ -221,6 +221,14 @@ export default function AdminSetup() {
           <Card style={{ marginBottom: spacing.md }} testID="staff-mgmt-card">
             <H3>Staff & Students</H3>
             <Muted style={{ marginTop: 4, marginBottom: 8 }}>Create accounts — credentials controlled by MD</Muted>
+            <TouchableOpacity testID="open-user-management" onPress={() => router.push('/admin/users')} style={styles.manageRow}>
+              <Ionicons name="people-circle-outline" size={22} color={colors.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowLabel}>User & Login Management</Text>
+                <Muted style={{ fontSize: 11 }}>Activate, deactivate & reset credentials</Muted>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+            </TouchableOpacity>
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
               <Button testID="btn-add-teacher" title="+ Add Teacher" onPress={() => { resetStaffForm(); setStaffModal('teacher'); }} style={{ flex: 1, minWidth: 140 }} />
               <Button testID="btn-add-admin" title="+ Add Admin" variant="secondary" onPress={() => { resetStaffForm(); setStaffModal('admin'); }} style={{ flex: 1, minWidth: 140 }} />
@@ -474,6 +482,11 @@ const styles = StyleSheet.create({
   modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   divider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.md },
   miniRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
+  manageRow: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
+    paddingVertical: 12, marginBottom: spacing.sm,
+    borderBottomWidth: 1, borderBottomColor: colors.border,
+  },
   miniText: { flex: 1, fontSize: 13, fontWeight: '600', color: colors.text },
   qa: {
     flex: 1, backgroundColor: colors.surface, borderRadius: radii.md,

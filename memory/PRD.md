@@ -82,3 +82,26 @@ Backend enforces RBAC on every protected route; token role is the source of trut
 
 ## New Data Models
 - `schedules` — id, class_name, day_of_week (0-6), start_time, end_time, activity, icon
+
+---
+
+## Phase-1 Upgrade — Payments & Notifications (2026-06-26)
+
+### Implemented
+- **Recreated `.env` files** (gitignored on GitHub import) — restored backend Mongo/JWT/seed config and frontend backend URL; app booting again.
+- **Removed on-screen auth secrets**: `debug_otp` dropped from `/api/auth/parent/send-otp`; `debug_token` dropped from `/api/auth/forgot-password`. Parent-login demo hint box and prefilled phone removed; staff-login "Demo accounts" box removed and fields cleared. `forgot-password` redesigned to a secure "request reset → MD issues temp password" info screen (no token exposure).
+- **Manual UPI fee flow** (reused/confirmed): parent submits UTR → `pending_verification` → Admin verify/reject → `paid`/rejected; amount is backend-authoritative; only admin verification marks Paid.
+- **MD User & Login Management** (`/admin/users`, MD-only): `GET /api/users`, `PATCH /api/users/{id}/status` (activate/deactivate, cannot change own), `POST /api/users/{id}/reset-password` (staff → one-time temp password; parents 400). Deactivated accounts blocked at login **and** at token decode (`get_current_user` active check).
+- **Emergent-managed push** wired end-to-end: `POST /api/register-push` (auth-guarded, user can only register own device), `send_push` helper, and event hooks on new announcement (→ all parents), new activity (→ that child's parent), payment submitted (→ admins/MD), payment verified/rejected (→ parent), and manual fee reminder (→ parent). Foreground handler + Android channel + tap-to-navigate + denied-permission Settings nudge in `_layout.tsx`. `app.json`: expo-notifications plugin, `POST_NOTIFICATIONS`, `googleServicesFile`.
+- **Manual fee reminder**: `POST /api/payments/{id}/remind` (admin/MD) + "Send Fee Reminder" button on pending fees in Admin Fees.
+
+### Verified
+- 19/19 backend tests pass (`/app/backend/tests/test_iteration3.py`); frontend flows verified by testing agent; register-push auth (401/403/skipped) re-verified via curl.
+
+### Requires native build (cannot test in Expo Go / web preview)
+- Actual push **delivery**. Needs: (1) user provides Firebase `google-services.json`, (2) Publish → deploy → generate iOS/Android build. `EMERGENT_PUSH_KEY` stays `placeholder` in preview and is injected automatically at deploy.
+
+### Backlog (later phases)
+- P1: self-service change-password screen for staff after temp-password login; SMS OTP for parents.
+- P2: two-way parent↔teacher messaging; automated scheduled fee reminders; sibling discounts; multi-photo/video galleries.
+- P3: online enrollment; analytics dashboards; additional payment gateway if needed.

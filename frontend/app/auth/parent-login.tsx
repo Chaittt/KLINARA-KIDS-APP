@@ -1,7 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
-  Alert,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -21,9 +20,8 @@ export default function ParentLogin() {
   const router = useRouter();
   const { sendOtp, verifyOtp } = useAuth();
   const [step, setStep] = useState<'phone' | 'otp'>('phone');
-  const [phone, setPhone] = useState('9999999999');
+  const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
-  const [hint, setHint] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
   const [resendIn, setResendIn] = useState(30);
@@ -58,8 +56,7 @@ export default function ParentLogin() {
     }
     setLoading(true);
     try {
-      const r = await sendOtp(phone.trim());
-      if (r.debug_otp) setHint(`Demo OTP: ${r.debug_otp}`);
+      await sendOtp(phone.trim());
       setStep('otp');
     } catch (e: any) {
       setErr(e.message || 'Failed to send OTP');
@@ -135,11 +132,6 @@ export default function ParentLogin() {
                 onPress={handleSend}
                 loading={loading}
               />
-              <View style={styles.hintBox}>
-                <Muted style={{ textAlign: 'center', fontSize: 13 }}>
-                  Demo phone: 9999999999 · OTP: 123456
-                </Muted>
-              </View>
             </View>
           ) : (
             <View>
@@ -153,9 +145,6 @@ export default function ParentLogin() {
                 maxLength={6}
                 error={err}
               />
-              {hint ? (
-                <Text style={styles.hint}>{hint}</Text>
-              ) : null}
               <Button
                 testID="verify-otp-btn"
                 title="Verify & Login"

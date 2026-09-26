@@ -1,11 +1,106 @@
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { useEffect } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
+import * as Notifications from 'expo-notifications';
+import * as Linking from 'expo-linking';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AuthProvider, useAuth } from '../src/auth';
+import { api } from '../src/api';
 import { colors } from '../src/theme';
+
+// 1. Foreground notification behavior — module scope, native only
+if (Platform.OS !== 'web') {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
+}
+
+// 2. Android channel — module scope, before any push arrives
+if (Platform.OS === 'android') {
+  Notifications.setNotificationChannelAsync('default', {
+    name: 'Default',
+    importance: Notifications.AndroidImportance.MAX,
+    sound: 'default',
+  });
+}
+
+async function maybeNudge(status: string, canAskAgain: boolean) {
+  if (status !== 'denied' || canAskAgain) return;
+  const last = await AsyncStorage.getItem('pushNudgeAt');
+  const week = 7 * 24 * 60 * 60 * 1000;
+  if (last && Date.now() - Number(last) <= week) return;
+  Alert.alert(
+    'Turn on notifications',
+    'Get instant alerts for announcements, daily activities and fee updates.',
+    [
+      { text: 'Later', style: 'cancel', onPress: () => AsyncStorage.setItem('pushNudgeAt', String(Date.now())) },
+      {
+        text: 'Open Settings',
+        onPress: () => {
+          AsyncStorage.setItem('pushNudgeAt', String(Date.now()));
+          Linking.openSettings();
+        },
+      },
+    ]
+  );
+}
+
+function PushManager() {
+  const { user } = useAuth();
+  const router = useRouter();
+
+  // Register this device for push whenever a user is signed in
+  useEffect(() => {
+    if (Platform.OS === 'web' || !user) return;
+    (async () => {
+      try {
+        const { status, canAskAgain } = await Notifications.requestPermissionsAsync();
+        if (status !== 'granted') {
+          await maybeNudge(status, canAskAgain);
+          return;
+        }
+        const tokenResp = await Notifications.getDevicePushTokenAsync();
+        await api('/register-push', {
+          method: 'POST',
+          body: { user_id: user.id, platform: Platform.OS, device_token: String(tokenResp.data) },
+        });
+      } catch {
+        // Expo Go / simulator / no native FCM-APNs — push works only in a real build
+      }
+    })();
+  }, [user]);
+
+  // Handle notification taps → open the relevant existing screen
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const route = (data: any) => {
+      const url = data?.deeplink || data?.action_url;
+      if (!url) return;
+      if (String(url).startsWith('http')) Linking.openURL(String(url));
+      else router.push(String(url) as any);
+    };
+    const sub = Notifications.addNotificationResponseReceivedListener((r) =>
+      route(r.notification.request.content.data || {})
+    );
+    Notifications.getLastNotificationResponseAsync().then((r) => {
+      if (r) route(r.notification.request.content.data || {});
+    });
+    return () => {
+      sub.remove();
+    };
+  }, []);
+
+  return null;
+}
 
 function RouteGuard() {
   const { user, loading } = useAuth();
@@ -15,7 +110,6 @@ function RouteGuard() {
   useEffect(() => {
     if (loading) return;
     const seg0 = segments[0] as string | undefined;
-    const inAuth = seg0 === 'auth';
     const inApp = seg0 === 'parent' || seg0 === 'teacher' || seg0 === 'admin';
 
     if (!user) {
@@ -53,6 +147,7 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <AuthProvider>
           <RouteGuard />
+          <PushManager />
           <StatusBar style="dark" />
           <Stack
             screenOptions={{

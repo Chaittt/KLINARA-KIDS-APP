@@ -19,8 +19,8 @@ import { useAuth } from '../../src/auth';
 export default function StaffLogin() {
   const router = useRouter();
   const { loginStaff } = useAuth();
-  const [email, setEmail] = useState('admin@klinara.com');
-  const [password, setPassword] = useState('Admin@123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPwd, setShowPwd] = useState(false);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
@@ -112,15 +112,6 @@ export default function StaffLogin() {
           >
             <Text style={styles.link}>Forgot password?</Text>
           </TouchableOpacity>
-
-          <View style={styles.hintBox}>
-            <Muted style={{ fontSize: 12, textAlign: 'center' }}>
-              Demo accounts:{'\n'}
-              admin@klinara.com / Admin@123{'\n'}
-              md@klinara.com / MD@123456{'\n'}
-              teacher@klinara.com / Teacher@123
-            </Muted>
-          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>

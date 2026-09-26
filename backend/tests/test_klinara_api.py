@@ -11,7 +11,7 @@ import requests
 
 BASE_URL = os.environ["EXPO_PUBLIC_BACKEND_URL"].rstrip("/") if os.environ.get(
     "EXPO_PUBLIC_BACKEND_URL"
-) else "https://nursery-dash-1.preview.emergentagent.com"
+) else "https://multi-role-school-1.preview.emergentagent.com"
 API = f"{BASE_URL}/api"
 
 
