@@ -33,6 +33,7 @@ type Payment = {
   reject_reason?: string;
   created_at: string;
   paid_at?: string;
+  due_date?: string | null;
 };
 type Student = { id: string; name: string };
 type UpiSettings = { upi_id: string; upi_name: string };
@@ -150,7 +151,7 @@ export default function ParentFees() {
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.payTitle}>{p.description}</Text>
-                    <Text style={styles.paySub}>Due {new Date(p.created_at).toLocaleDateString()}</Text>
+                    <Text style={styles.paySub}>Due {new Date(p.due_date || p.created_at).toLocaleDateString()}</Text>
                     {p.reject_reason ? (
                       <View style={styles.rejectBox}>
                         <Ionicons name="alert-circle" size={14} color={colors.inverse} />

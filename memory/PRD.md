@@ -105,3 +105,22 @@ Backend enforces RBAC on every protected route; token role is the source of trut
 - P1: self-service change-password screen for staff after temp-password login; SMS OTP for parents.
 - P2: two-way parent↔teacher messaging; automated scheduled fee reminders; sibling discounts; multi-photo/video galleries.
 - P3: online enrollment; analytics dashboards; additional payment gateway if needed.
+
+---
+
+## Feature — Student Fee Plans at Registration (2026-06-26)
+
+### Implemented
+- **Add Student** now captures **Parent name** (required; becomes the parent account's display name, replacing the old auto "Parent of <child>"; updates an existing parent's name if the phone already exists), **Total fees** (whole rupees), and **Plan type**:
+  - **Single** → one pending fee ("Full Fee (One-time)") due on admission.
+  - **Term** → three pending fees "Term 1/2/3 of 3" due at admission, +3 months, +6 months. Three amount fields prefill with total÷3 (remainder on Term 1) and must sum exactly to the total (inline validation, blocks save on mismatch).
+- **Existing students**: MD can set a plan via `POST /api/students/{id}/fee-plan` ("Set fee plan" link on rows without a plan). Setting a plan soft-cancels prior untouched pending fees (`deleted_at` + status `cancelled`) and creates the new ones. **Locked** (400) once any payment is `pending_verification` or `paid`.
+- Backend: `StudentIn` extended + `FeePlanIn`; helpers `add_months`, `validate_plan`, `create_plan_payments`; `serialize_student` returns `total_fees`/`plan_type`; `serialize_payment` returns `due_date`/`plan_type`/`term_index`/`term_total`. All payment list & report queries now filter `{deleted_at: None}` so cancelled fees never surface in lists, reminders, or revenue.
+- Parent Fees screen shows each fee's due date (term due dates) and the "Term x of 3" label; pays through the existing UPI submit → admin verify → paid flow unchanged.
+
+### Verified
+- 13/13 backend tests (`/app/backend/tests/test_iteration4.py`) + frontend flows via testing agent. Regression on UPI submit/verify/reminder over term fees confirmed. Test seed data cleaned from DB.
+
+### Notes / backlog
+- (Web-only) Alert on term-sum mismatch is a no-op in browser preview; inline red warning + save-block work everywhere and Alert fires on device.
+- Phase 2: edit plan after payments start; custom installment count/dates; per-class fee templates. Phase 3: scheduled reminders per due date; sibling discounts; full-plan receipts.

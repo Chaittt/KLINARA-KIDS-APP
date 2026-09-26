@@ -183,8 +183,18 @@ class StudentIn(BaseModel):
     name: str
     class_name: str = Field(..., alias="class_name")
     parent_phone: str
+    parent_name: str
     age: Optional[int] = None
     photo: Optional[str] = None  # base64
+    total_fees: int
+    plan_type: Literal["single", "term"]
+    term_amounts: Optional[List[int]] = None
+
+
+class FeePlanIn(BaseModel):
+    total_fees: int
+    plan_type: Literal["single", "term"]
+    term_amounts: Optional[List[int]] = None
 
 
 class StudentUpdate(BaseModel):
@@ -441,6 +451,8 @@ def serialize_student(s: dict) -> dict:
         "elthea_archetype_name": s.get("elthea_archetype_name"),
         "elthea_archetype_description": s.get("elthea_archetype_description"),
         "elthea_last_assessed_at": s.get("elthea_last_assessed_at").isoformat() if s.get("elthea_last_assessed_at") else None,
+        "total_fees": s.get("total_fees"),
+        "plan_type": s.get("plan_type"),
         "created_at": s.get("created_at").isoformat() if s.get("created_at") else None,
     }
 
@@ -469,22 +481,80 @@ async def get_student(student_id: str, user: dict = Depends(get_current_user)):
     return serialize_student(s)
 
 
+def add_months(dt: datetime, months: int) -> datetime:
+    import calendar
+    m = dt.month - 1 + months
+    y = dt.year + m // 12
+    m = m % 12 + 1
+    d = min(dt.day, calendar.monthrange(y, m)[1])
+    return dt.replace(year=y, month=m, day=d)
+
+
+def validate_plan(total_fees: Optional[int], plan_type: str, term_amounts: Optional[List[int]]):
+    if total_fees is None or total_fees <= 0:
+        raise HTTPException(status_code=400, detail="Total fees must be greater than zero")
+    if plan_type not in ("single", "term"):
+        raise HTTPException(status_code=400, detail="Plan type must be 'single' or 'term'")
+    if plan_type == "term":
+        if not term_amounts or len(term_amounts) != 3:
+            raise HTTPException(status_code=400, detail="Provide exactly 3 term amounts")
+        if any((a is None or a <= 0) for a in term_amounts):
+            raise HTTPException(status_code=400, detail="Each term amount must be greater than zero")
+        if sum(term_amounts) != total_fees:
+            raise HTTPException(status_code=400, detail=f"Term amounts must add up to the total (₹{total_fees})")
+
+
+async def create_plan_payments(student_id: str, total_fees: int, plan_type: str,
+                               term_amounts: Optional[List[int]], admission: datetime):
+    if plan_type == "single":
+        specs = [(total_fees, "Full Fee (One-time)", admission, 1, 1)]
+    else:
+        specs = [
+            (term_amounts[0], "Term 1 of 3", admission, 1, 3),
+            (term_amounts[1], "Term 2 of 3", add_months(admission, 3), 2, 3),
+            (term_amounts[2], "Term 3 of 3", add_months(admission, 6), 3, 3),
+        ]
+    for amount, desc, due, idx, total in specs:
+        await db.payments.insert_one({
+            "id": str(uuid.uuid4()),
+            "student_id": student_id,
+            "amount": amount,
+            "status": "pending",
+            "transaction_id": None,
+            "description": desc,
+            "plan_type": plan_type,
+            "term_index": idx,
+            "term_total": total,
+            "due_date": due,
+            "created_at": now_utc(),
+            "paid_at": None,
+        })
+
+
 @api.post("/students")
 async def create_student(body: StudentIn, user: dict = Depends(require_roles("admin", "md"))):
+    validate_plan(body.total_fees, body.plan_type, body.term_amounts)
+    parent_name = body.parent_name.strip()
+    if not parent_name:
+        raise HTTPException(status_code=400, detail="Parent name is required")
+
     parent = await db.users.find_one({"phone": body.parent_phone, "role": "parent"})
-    parent_id = parent["id"] if parent else None
-    if not parent:
-        # Auto-create parent user (omit email to avoid unique-null collisions)
+    if parent:
+        parent_id = parent["id"]
+        # Keep the parent account's display name in sync with the entered value
+        await db.users.update_one({"id": parent_id}, {"$set": {"name": parent_name}})
+    else:
         parent_id = str(uuid.uuid4())
         await db.users.insert_one({
             "id": parent_id,
-            "name": f"Parent of {body.name}",
+            "name": parent_name,
             "phone": body.parent_phone,
             "password_hash": None,
             "role": "parent",
             "created_at": now_utc(),
         })
 
+    admission = now_utc()
     doc = {
         "id": str(uuid.uuid4()),
         "name": body.name,
@@ -493,14 +563,43 @@ async def create_student(body: StudentIn, user: dict = Depends(require_roles("ad
         "parent_id": parent_id,
         "age": body.age,
         "photo": body.photo,
+        "total_fees": body.total_fees,
+        "plan_type": body.plan_type,
         "elthea_grow": None,
         "elthea_archetype_name": None,
         "elthea_archetype_description": None,
         "elthea_last_assessed_at": None,
-        "created_at": now_utc(),
+        "created_at": admission,
     }
     await db.students.insert_one(doc)
+    await create_plan_payments(doc["id"], body.total_fees, body.plan_type, body.term_amounts, admission)
     return serialize_student(doc)
+
+
+@api.post("/students/{student_id}/fee-plan")
+async def set_fee_plan(student_id: str, body: FeePlanIn, user: dict = Depends(require_roles("admin", "md"))):
+    student = await db.students.find_one({"id": student_id})
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    # Locked once any payment is in progress (submitted for verification or already paid)
+    locked = await db.payments.find_one({
+        "student_id": student_id,
+        "deleted_at": None,
+        "status": {"$in": ["pending_verification", "paid"]},
+    })
+    if locked:
+        raise HTTPException(status_code=400, detail="Fee plan is locked — a payment is already in progress for this student")
+    validate_plan(body.total_fees, body.plan_type, body.term_amounts)
+    # Retire any existing untouched (pending) fees before creating the new plan
+    await db.payments.update_many(
+        {"student_id": student_id, "deleted_at": None, "status": "pending"},
+        {"$set": {"deleted_at": now_utc(), "status": "cancelled"}},
+    )
+    admission = now_utc()
+    await db.students.update_one({"id": student_id}, {"$set": {"total_fees": body.total_fees, "plan_type": body.plan_type}})
+    await create_plan_payments(student_id, body.total_fees, body.plan_type, body.term_amounts, admission)
+    s = await db.students.find_one({"id": student_id})
+    return {"message": "Fee plan set", "student": serialize_student(s)}
 
 
 @api.put("/students/{student_id}")
@@ -727,6 +826,10 @@ def serialize_payment(p: dict) -> dict:
         "verified_at": p.get("verified_at").isoformat() if p.get("verified_at") else None,
         "reject_reason": p.get("reject_reason"),
         "last_reminded_at": p.get("last_reminded_at").isoformat() if p.get("last_reminded_at") else None,
+        "due_date": p.get("due_date").isoformat() if p.get("due_date") else None,
+        "plan_type": p.get("plan_type"),
+        "term_index": p.get("term_index"),
+        "term_total": p.get("term_total"),
         "created_at": p.get("created_at").isoformat() if p.get("created_at") else None,
         "paid_at": p.get("paid_at").isoformat() if p.get("paid_at") else None,
     }
@@ -770,13 +873,13 @@ async def list_student_payments(student_id: str, user: dict = Depends(get_curren
         s = await db.students.find_one({"id": student_id})
         if not s or s.get("parent_phone") != user.get("phone"):
             raise HTTPException(status_code=403, detail="Forbidden")
-    recs = await db.payments.find({"student_id": student_id}).sort("created_at", -1).to_list(200)
+    recs = await db.payments.find({"student_id": student_id, "deleted_at": None}).sort("created_at", -1).to_list(200)
     return [serialize_payment(r) for r in recs]
 
 
 @api.get("/payments")
 async def list_all_payments(user: dict = Depends(require_roles("admin", "md"))):
-    recs = await db.payments.find().sort("created_at", -1).to_list(1000)
+    recs = await db.payments.find({"deleted_at": None}).sort("created_at", -1).to_list(1000)
     return [serialize_payment(r) for r in recs]
 
 
@@ -913,7 +1016,7 @@ async def verify_upi_payment(payment_id: str, body: VerifyIn, user: dict = Depen
 
 @api.get("/payments/pending-verification")
 async def list_pending_verifications(user: dict = Depends(require_roles("admin", "md"))):
-    recs = await db.payments.find({"status": "pending_verification"}).sort("submitted_at", -1).to_list(500)
+    recs = await db.payments.find({"status": "pending_verification", "deleted_at": None}).sort("submitted_at", -1).to_list(500)
     result = []
     for p in recs:
         student = await db.students.find_one({"id": p["student_id"]}, {"_id": 0, "name": 1, "class_name": 1, "parent_phone": 1})
@@ -1047,7 +1150,7 @@ async def schedule_today(user: dict = Depends(get_current_user)):
 # -------------------- Reports (admin/md) --------------------
 @api.get("/reports/financial")
 async def financial_report(user: dict = Depends(require_roles("admin", "md"))):
-    payments = await db.payments.find().to_list(5000)
+    payments = await db.payments.find({"deleted_at": None}).to_list(5000)
     total_revenue = sum(p["amount"] for p in payments if p["status"] == "paid")
     pending = sum(p["amount"] for p in payments if p["status"] == "pending")
     paid_count = sum(1 for p in payments if p["status"] == "paid")
@@ -1094,7 +1197,7 @@ async def overview(user: dict = Depends(require_roles("admin", "md"))):
     students_count = await db.students.count_documents({})
     teachers_count = await db.users.count_documents({"role": "teacher"})
     parents_count = await db.users.count_documents({"role": "parent"})
-    payments = await db.payments.find().to_list(5000)
+    payments = await db.payments.find({"deleted_at": None}).to_list(5000)
     revenue = sum(p["amount"] for p in payments if p["status"] == "paid")
     pending = sum(p["amount"] for p in payments if p["status"] == "pending")
     return {
@@ -1510,7 +1613,7 @@ async def class_occupancy(user: dict = Depends(require_roles("md", "admin"))):
 async def fees_by_class(user: dict = Depends(require_roles("md"))):
     students = await db.students.find().to_list(2000)
     stud_map = {s["id"]: s for s in students}
-    pays = await db.payments.find().to_list(5000)
+    pays = await db.payments.find({"deleted_at": None}).to_list(5000)
     by_class: dict = {}
     for p in pays:
         s = stud_map.get(p["student_id"])
@@ -1530,7 +1633,7 @@ async def student_fees_summary(student_id: str, user: dict = Depends(require_rol
     s = await db.students.find_one({"id": student_id})
     if not s:
         raise HTTPException(status_code=404, detail="Not found")
-    pays = await db.payments.find({"student_id": student_id}).sort("created_at", -1).to_list(200)
+    pays = await db.payments.find({"student_id": student_id, "deleted_at": None}).sort("created_at", -1).to_list(200)
     paid = sum(p["amount"] for p in pays if p["status"] == "paid")
     pending = sum(p["amount"] for p in pays if p["status"] == "pending")
     return {

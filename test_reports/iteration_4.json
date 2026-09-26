@@ -1,0 +1,41 @@
+{
+  "summary": "Iteration 4 — Fee-plan-at-registration tested end-to-end. Wrote 13 pytest cases in test_iteration4.py, all 13 pass. Covered: single plan creates 1 pending fee 'Full Fee (One-time)' with due_date; term plan creates 3 pending fees 'Term 1/2/3 of 3' with correct term_index/term_total and due_dates spaced ~3 months and ~6 months from admission; validation errors (term_amounts not summing / wrong count / <=0 / total_fees <= 0 all return 400); new-parent creation uses entered parent_name (no 'Parent of X'); existing-parent name is updated in-place without duplicating the user; GET /students exposes total_fees + plan_type; GET /payments/student/{id} exposes due_date, plan_type, term_index, term_total; POST /students/{id}/fee-plan soft-cancels prior pending fees so they disappear from /payments and /payments/student/{id}; fee-plan is LOCKED (400) once any payment is in pending_verification OR paid; regression: submit-upi -> verify approve -> paid works on a term fee, POST /payments/{id}/remind returns 200 on pending term and 400 once paid. Frontend (mobile 390x844): MD logs in, opens Students, sees fee tags on the list ('₹30,000 · One-time', '₹30,000 · 3 terms', '₹5,000 · One-time'). Add Student modal renders all requested testIDs (add-name, add-class, add-parent-name, add-phone, add-age, add-total-fees, plan-single/plan-term). Selecting plan-term reveals add-term-1/2/3 prefilled with total/3 (10000/10000/10000). Editing term-1 to 5000 shows inline red warning 'Installments total ₹25,000 — must equal ₹30,000' and the Add Student button becomes a silent no-op (does NOT create the student). Fixing the amounts and tapping confirm-add creates the term student and it appears in the list with a '3 terms' tag. Existing student Aarav Reddy (no plan) shows setplan-<id> chip; tapping it opens the 'Set Fee Plan · Aarav Reddy' modal with total-fees input, Single/Term toggle, and confirm-set-plan button. Deprecated packages detected: none. SafeAreaView issues detected: none. React Native web warnings observed: expo-notifications push-token listener not supported on web (expected), 'shadow*' style props deprecated (pre-existing), 'props.pointerEvents is deprecated' (pre-existing).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "admin/students.tsx Add Student modal", "issue": "Spec asks for an alert() when term amounts don't sum to total. Implementation instead uses an inline red warning and silently no-ops the Add Student button (no alert, no visible disabled state). Result is correct (student is not created) but the visual affordance is weaker: a user tapping the button after seeing the warning sees no feedback that the tap was rejected. Recommend either dimming the button when !amountsMatch, or firing Alert.alert('Amounts don\\'t match', ...).", "testID": "confirm-add", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "shadow* style deprecation", "issue": "Console: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' Pre-existing from prior iterations."},
+      {"component": "props.pointerEvents deprecation", "issue": "Console: 'props.pointerEvents is deprecated. Use style.pointerEvents' — pre-existing RN Web warning, non-blocking."},
+      {"component": "expo-notifications on web", "issue": "Console warning about push-token listener not supported on web — expected in preview because EMERGENT_PUSH_KEY is a placeholder."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration4.py",
+    "/app/test_reports/pytest/iteration4.xml"
+  ],
+  "action_items": [
+    "(LOW) admin/students.tsx: when plan_type==='term' and sum(term_amounts) !== totalFees, either (a) fire Alert.alert on confirm-add, or (b) render the Add Student button in a disabled visual style. Currently the button just no-ops which is confusing after seeing the inline warning.",
+    "(INFO) Consider prefixing all TEST_ students created during iteration 4 QA (they persist in Mongo) with a cleanup script or hide 'cancelled' payments from all admin fee lists — the soft-cancel filter is already in place; just noting several TEST_-prefixed students are now visible on the Students screen."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now ~1900+ lines; new /students POST and /students/{id}/fee-plan add plan-aware payment creation logic that would live better in a dedicated payments/fees module. This was flagged last iteration too — increasingly urgent.",
+    "validate_plan() correctly rejects total_fees<=0, term!=3 values, negative amounts, and mismatched sums. Good defensive coverage.",
+    "create_plan_payments() writes 'deleted_at' as missing (not set); the filter {'deleted_at': None} across payments queries relies on Mongo treating missing == None which is correct. Just an FYI: subsequent aggregation queries relying on $exists=false semantics could bite here if any indexing is added.",
+    "set_fee_plan lock check queries {'deleted_at': None, 'status': {'$in': ['pending_verification','paid']}} — correct; matches the two states that should freeze the plan.",
+    "Parent-name sync on create_student: correctly updates the existing parent user's 'name' when the phone already belongs to a parent. Verified via test_existing_parent_name_updated.",
+    "The Add Student flow on the frontend uses inline validation but doesn't call Alert on confirm-add for term mismatches (see UI bug above)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration4.py (new — 13 pytest cases, 100% passing)"
+  ],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "~95% — all requested flows verified; one LOW-severity confirm-add feedback issue"},
+  "seed_data_creation": "Created ~10 TEST_-prefixed students during pytest + UI (phone prefix 7000099901/2 for UI, 70000xxxxx for pytest). All persisted in Mongo. Also created a paid term fee (utr PAIDUTR99999) and a pending_verification fee (utr TESTUTR12345) on TEST_ students to exercise the lock. If admin views become cluttered, delete students where name LIKE 'TEST_%'.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "BASE_URL: read from /app/frontend/.env EXPO_PUBLIC_BACKEND_URL (env var may not be exported in shell — my test file falls back to reading the .env). New iteration-4 endpoints: POST /api/students now REQUIRES parent_name, total_fees(>0), plan_type('single'|'term'), and term_amounts[3] summing to total_fees when plan_type=='term'; POST /api/students/{id}/fee-plan (admin/md) sets/replaces plan, LOCKED (400) if any payment in pending_verification or paid. Payment serializer now returns due_date, plan_type, term_index, term_total. All payment list/report queries filter {'deleted_at': None} so soft-cancelled fees are invisible. Frontend testIDs on /admin/students: add-student-btn, add-name, add-class, add-parent-name, add-phone, add-age, add-total-fees, plan-single, plan-term, add-term-1/2/3, confirm-add, setplan-<id>, confirm-set-plan, student-<id>, del-<id>. Fee tag rendering on the list works. Existing testIDs from iter 3 still valid.",
+  "rca_of_issue": "N/A — no functional regressions. Only a LOW-severity UX gap: the term-amount-mismatch on the Add Student modal is caught by an inline warning but the confirm-add button silently no-ops instead of firing an alert or disabling itself; a user could tap and wonder if it registered."
+}
