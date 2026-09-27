@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../src/api';
@@ -15,11 +15,13 @@ type Payment = {
   transaction_id?: string;
   created_at: string;
   paid_at?: string;
+  last_reminded_at?: string | null;
 };
 
 export default function AdminFees() {
   const [items, setItems] = useState<Payment[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [reminding, setReminding] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -35,6 +37,19 @@ export default function AdminFees() {
     setRefreshing(true);
     await load();
     setRefreshing(false);
+  }
+
+  async function sendReminder(p: Payment) {
+    setReminding(p.id);
+    try {
+      await api(`/payments/${p.id}/remind`, { method: 'POST' });
+      Alert.alert('Reminder sent', `The parent has been notified about the pending ₹${p.amount.toLocaleString()} fee.`);
+      await load();
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Could not send reminder');
+    } finally {
+      setReminding(null);
+    }
   }
 
   const paid = items.filter((i) => i.status === 'paid').reduce((s, i) => s + i.amount, 0);
@@ -102,6 +117,19 @@ export default function AdminFees() {
                 </View>
               </View>
             </View>
+            {item.status === 'pending' ? (
+              <TouchableOpacity
+                testID={`remind-${item.id}`}
+                onPress={() => sendReminder(item)}
+                disabled={reminding === item.id}
+                style={[styles.remindBtn, reminding === item.id && { opacity: 0.6 }]}
+              >
+                <Ionicons name="notifications-outline" size={15} color={colors.primary} />
+                <Text style={styles.remindText}>
+                  {reminding === item.id ? 'Sending…' : item.last_reminded_at ? 'Send Reminder Again' : 'Send Fee Reminder'}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
           </Card>
         )}
       />
@@ -121,4 +149,10 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: radii.pill,
   },
+  remindBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    marginTop: spacing.md, paddingVertical: 10, borderRadius: radii.md,
+    borderWidth: 1, borderColor: colors.primary,
+  },
+  remindText: { color: colors.primary, fontWeight: '700', fontSize: 13 },
 });

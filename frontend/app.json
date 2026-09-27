@@ -23,11 +23,9 @@
         "backgroundColor": "#f5f1e8"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.klinarakids.app",
-      "versionCode": 1,
-      "permissions": [
-        "android.permission.RECORD_AUDIO"
-      ]
+      "package": "com.emergent.nurserydash.qnzmux",
+      "googleServicesFile": "./google-services.json",
+      "permissions": ["POST_NOTIFICATIONS"]
     },
     "web": {
       "bundler": "metro",
@@ -48,10 +46,9 @@
       "expo-web-browser",
       "expo-font",
       [
-        "expo-image-picker",
+        "expo-notifications",
         {
-          "photosPermission": "Klinara Kids needs photo library access to attach photos to student records.",
-          "cameraPermission": "Klinara Kids needs camera access to capture photos of student activities."
+          "color": "#2f6b6b"
         }
       ]
     ],

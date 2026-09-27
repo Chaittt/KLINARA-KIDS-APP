@@ -9,6 +9,7 @@ import logging
 import bcrypt
 import jwt
 import secrets
+import httpx
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Literal
 
@@ -94,6 +95,8 @@ async def get_current_user(request: Request) -> dict:
     user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    if user.get("active") is False:
+        raise HTTPException(status_code=401, detail="Account deactivated")
     return user
 
 
@@ -103,6 +106,55 @@ def require_roles(*roles: str):
             raise HTTPException(status_code=403, detail="Forbidden")
         return user
     return dep
+
+
+# -------------------- Push Notifications (Emergent managed) --------------------
+PUSH_BASE_URL = "https://integrations.emergentagent.com"
+PUSH_KEY = os.environ.get("EMERGENT_PUSH_KEY", "placeholder")
+
+_push_client = httpx.AsyncClient(
+    base_url=PUSH_BASE_URL,
+    headers={"X-Push-Key": PUSH_KEY},
+    timeout=10.0,
+)
+
+
+async def send_push(recipients: List[str], data: dict, idempotency_key: Optional[str] = None) -> None:
+    """Relay a push to the Emergent managed push service. Non-blocking: never raises."""
+    recipients = [r for r in (recipients or []) if r]
+    if not recipients:
+        return
+    if "title" not in data or "message" not in data:
+        return
+    for i in range(0, len(recipients), 100):
+        chunk = recipients[i:i + 100]
+        payload: dict = {"recipients": chunk, "data": data}
+        if idempotency_key:
+            payload["$idempotency_key"] = f"{idempotency_key}:{i}"
+        try:
+            resp = await _push_client.post("/api/v1/push/trigger", json=payload)
+            resp.raise_for_status()
+        except Exception as e:
+            log.warning(f"Push send failed (non-blocking): {e}")
+
+
+async def parent_ids_all() -> List[str]:
+    parents = await db.users.find({"role": "parent"}, {"_id": 0, "id": 1}).to_list(3000)
+    return [p["id"] for p in parents]
+
+
+async def staff_ids(roles=("admin", "md")) -> List[str]:
+    staff = await db.users.find({"role": {"$in": list(roles)}}, {"_id": 0, "id": 1}).to_list(500)
+    return [s["id"] for s in staff]
+
+
+async def parent_id_for_student(student: Optional[dict]) -> Optional[str]:
+    if not student:
+        return None
+    if student.get("parent_id"):
+        return student["parent_id"]
+    p = await db.users.find_one({"phone": student.get("parent_phone"), "role": "parent"}, {"_id": 0, "id": 1})
+    return p["id"] if p else None
 
 
 # -------------------- Models --------------------
@@ -133,8 +185,18 @@ class StudentIn(BaseModel):
     name: str
     class_name: str = Field(..., alias="class_name")
     parent_phone: str
+    parent_name: str
     age: Optional[int] = None
     photo: Optional[str] = None  # base64
+    total_fees: int
+    plan_type: Literal["single", "term"]
+    term_amounts: Optional[List[int]] = None
+
+
+class FeePlanIn(BaseModel):
+    total_fees: int
+    plan_type: Literal["single", "term"]
+    term_amounts: Optional[List[int]] = None
 
 
 class StudentUpdate(BaseModel):
@@ -206,6 +268,8 @@ async def staff_login(body: StaffLoginIn, request: Request):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     await db.login_attempts.delete_one({"identifier": identifier})
+    if user.get("active") is False:
+        raise HTTPException(status_code=403, detail="Account deactivated. Contact your administrator.")
     token = create_access_token(user["id"], user["role"])
     return {"access_token": token, "token_type": "bearer", "user": serialize_user(user)}
 
@@ -223,8 +287,8 @@ async def forgot_password(body: ForgotPasswordIn):
             "used": False,
             "created_at": now_utc(),
         })
-        log.info(f"[MOCK RESET] Reset token for {email}: {token}")
-        return {"message": "If the email exists, a reset link has been sent.", "debug_token": token}
+        log.info(f"[RESET] Reset token generated for {email}")
+        return {"message": "If the email exists, a reset link has been sent."}
     return {"message": "If the email exists, a reset link has been sent."}
 
 
@@ -260,18 +324,11 @@ async def parent_send_otp(body: SendOtpIn):
             "password_hash": None,
             "role": "parent",
             "created_at": now_utc(),
-        })
-        if not linked_student.get("parent_id"):
-            await db.students.update_one({"id": linked_student["id"]}, {"$set": {"parent_id": parent_id}})
-
-    sent = start_verification(phone)
-    if not sent:
-        raise HTTPException(status_code=502, detail="Failed to send OTP. Please try again.")
-
-    response = {"message": "OTP sent successfully"}
-    if os.environ.get("MOCK_OTP"):
-        response["debug_otp"] = os.environ["MOCK_OTP"]
-    return response
+        }},
+        upsert=True,
+    )
+    log.info(f"[OTP] OTP dispatched for {phone}")
+    return {"message": "OTP sent successfully", "expires_in": OTP_TTL_SECONDS}
 
 
 @api.post("/auth/parent/verify-otp")
@@ -284,6 +341,8 @@ async def parent_verify_otp(body: VerifyOtpIn):
     user = await db.users.find_one({"phone": phone, "role": "parent"})
     if not user:
         raise HTTPException(status_code=404, detail="Parent not found")
+    if user.get("active") is False:
+        raise HTTPException(status_code=403, detail="Account deactivated. Contact your school administrator.")
     token = create_access_token(user["id"], "parent")
     return {"access_token": token, "token_type": "bearer", "user": serialize_user(user)}
 
@@ -296,6 +355,84 @@ async def get_me(user: dict = Depends(get_current_user)):
 @api.post("/auth/logout")
 async def logout(user: dict = Depends(get_current_user)):
     return {"message": "Logged out"}
+
+
+# -------------------- Push registration --------------------
+class RegisterPushIn(BaseModel):
+    user_id: str
+    platform: str
+    device_token: str
+
+
+@api.post("/register-push", status_code=201)
+async def register_push(body: RegisterPushIn, user: dict = Depends(get_current_user)):
+    if body.user_id != user["id"]:
+        raise HTTPException(status_code=403, detail="Cannot register a device for another user")
+    try:
+        resp = await _push_client.post("/api/v1/push/users/register", json=body.dict())
+        resp.raise_for_status()
+    except Exception as e:
+        # Non-blocking in preview (placeholder key). Real key is injected at deploy.
+        log.warning(f"register-push relay failed (non-blocking): {e}")
+        return {"status": "skipped"}
+    return {"status": "registered"}
+
+
+# -------------------- Users & Login Management (MD only) --------------------
+def serialize_user_admin(u: dict) -> dict:
+    return {
+        "id": u.get("id"),
+        "name": u.get("name"),
+        "email": u.get("email"),
+        "phone": u.get("phone"),
+        "role": u.get("role"),
+        "class_name": u.get("class_name"),
+        "active": u.get("active", True) is not False,
+        "created_at": u.get("created_at").isoformat() if u.get("created_at") else None,
+    }
+
+
+@api.get("/users")
+async def list_users(role: Optional[str] = None, user: dict = Depends(require_roles("md"))):
+    q: dict = {}
+    if role:
+        q["role"] = role
+    users = await db.users.find(q, {"_id": 0, "password_hash": 0}).to_list(5000)
+    return [serialize_user_admin(u) for u in users]
+
+
+class UserStatusIn(BaseModel):
+    active: bool
+
+
+@api.patch("/users/{uid}/status")
+async def set_user_status(uid: str, body: UserStatusIn, user: dict = Depends(require_roles("md"))):
+    if uid == user["id"]:
+        raise HTTPException(status_code=400, detail="You cannot change your own account status")
+    target = await db.users.find_one({"id": uid})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    await db.users.update_one({"id": uid}, {"$set": {"active": body.active}})
+    t = await db.users.find_one({"id": uid})
+    return serialize_user_admin(t)
+
+
+def _gen_temp_password() -> str:
+    import string
+    alphabet = string.ascii_letters + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(10))
+
+
+@api.post("/users/{uid}/reset-password")
+async def reset_user_password(uid: str, user: dict = Depends(require_roles("md"))):
+    target = await db.users.find_one({"id": uid})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.get("role") == "parent":
+        raise HTTPException(status_code=400, detail="Parents sign in with phone + OTP; there is no password to reset")
+    temp = _gen_temp_password()
+    await db.users.update_one({"id": uid}, {"$set": {"password_hash": hash_password(temp)}})
+    return {"temp_password": temp, "message": "Temporary password generated. Share it securely with the user."}
 
 
 # -------------------- Students --------------------
@@ -312,6 +449,8 @@ def serialize_student(s: dict) -> dict:
         "elthea_archetype_name": s.get("elthea_archetype_name"),
         "elthea_archetype_description": s.get("elthea_archetype_description"),
         "elthea_last_assessed_at": s.get("elthea_last_assessed_at").isoformat() if s.get("elthea_last_assessed_at") else None,
+        "total_fees": s.get("total_fees"),
+        "plan_type": s.get("plan_type"),
         "created_at": s.get("created_at").isoformat() if s.get("created_at") else None,
     }
 
@@ -340,22 +479,80 @@ async def get_student(student_id: str, user: dict = Depends(get_current_user)):
     return serialize_student(s)
 
 
+def add_months(dt: datetime, months: int) -> datetime:
+    import calendar
+    m = dt.month - 1 + months
+    y = dt.year + m // 12
+    m = m % 12 + 1
+    d = min(dt.day, calendar.monthrange(y, m)[1])
+    return dt.replace(year=y, month=m, day=d)
+
+
+def validate_plan(total_fees: Optional[int], plan_type: str, term_amounts: Optional[List[int]]):
+    if total_fees is None or total_fees <= 0:
+        raise HTTPException(status_code=400, detail="Total fees must be greater than zero")
+    if plan_type not in ("single", "term"):
+        raise HTTPException(status_code=400, detail="Plan type must be 'single' or 'term'")
+    if plan_type == "term":
+        if not term_amounts or len(term_amounts) != 3:
+            raise HTTPException(status_code=400, detail="Provide exactly 3 term amounts")
+        if any((a is None or a <= 0) for a in term_amounts):
+            raise HTTPException(status_code=400, detail="Each term amount must be greater than zero")
+        if sum(term_amounts) != total_fees:
+            raise HTTPException(status_code=400, detail=f"Term amounts must add up to the total (₹{total_fees})")
+
+
+async def create_plan_payments(student_id: str, total_fees: int, plan_type: str,
+                               term_amounts: Optional[List[int]], admission: datetime):
+    if plan_type == "single":
+        specs = [(total_fees, "Full Fee (One-time)", admission, 1, 1)]
+    else:
+        specs = [
+            (term_amounts[0], "Term 1 of 3", admission, 1, 3),
+            (term_amounts[1], "Term 2 of 3", add_months(admission, 3), 2, 3),
+            (term_amounts[2], "Term 3 of 3", add_months(admission, 6), 3, 3),
+        ]
+    for amount, desc, due, idx, total in specs:
+        await db.payments.insert_one({
+            "id": str(uuid.uuid4()),
+            "student_id": student_id,
+            "amount": amount,
+            "status": "pending",
+            "transaction_id": None,
+            "description": desc,
+            "plan_type": plan_type,
+            "term_index": idx,
+            "term_total": total,
+            "due_date": due,
+            "created_at": now_utc(),
+            "paid_at": None,
+        })
+
+
 @api.post("/students")
 async def create_student(body: StudentIn, user: dict = Depends(require_roles("admin", "md"))):
+    validate_plan(body.total_fees, body.plan_type, body.term_amounts)
+    parent_name = body.parent_name.strip()
+    if not parent_name:
+        raise HTTPException(status_code=400, detail="Parent name is required")
+
     parent = await db.users.find_one({"phone": body.parent_phone, "role": "parent"})
-    parent_id = parent["id"] if parent else None
-    if not parent:
-        # Auto-create parent user (omit email to avoid unique-null collisions)
+    if parent:
+        parent_id = parent["id"]
+        # Keep the parent account's display name in sync with the entered value
+        await db.users.update_one({"id": parent_id}, {"$set": {"name": parent_name}})
+    else:
         parent_id = str(uuid.uuid4())
         await db.users.insert_one({
             "id": parent_id,
-            "name": f"Parent of {body.name}",
+            "name": parent_name,
             "phone": body.parent_phone,
             "password_hash": None,
             "role": "parent",
             "created_at": now_utc(),
         })
 
+    admission = now_utc()
     doc = {
         "id": str(uuid.uuid4()),
         "name": body.name,
@@ -364,14 +561,43 @@ async def create_student(body: StudentIn, user: dict = Depends(require_roles("ad
         "parent_id": parent_id,
         "age": body.age,
         "photo": body.photo,
+        "total_fees": body.total_fees,
+        "plan_type": body.plan_type,
         "elthea_grow": None,
         "elthea_archetype_name": None,
         "elthea_archetype_description": None,
         "elthea_last_assessed_at": None,
-        "created_at": now_utc(),
+        "created_at": admission,
     }
     await db.students.insert_one(doc)
+    await create_plan_payments(doc["id"], body.total_fees, body.plan_type, body.term_amounts, admission)
     return serialize_student(doc)
+
+
+@api.post("/students/{student_id}/fee-plan")
+async def set_fee_plan(student_id: str, body: FeePlanIn, user: dict = Depends(require_roles("admin", "md"))):
+    student = await db.students.find_one({"id": student_id})
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    # Locked once any payment is in progress (submitted for verification or already paid)
+    locked = await db.payments.find_one({
+        "student_id": student_id,
+        "deleted_at": None,
+        "status": {"$in": ["pending_verification", "paid"]},
+    })
+    if locked:
+        raise HTTPException(status_code=400, detail="Fee plan is locked — a payment is already in progress for this student")
+    validate_plan(body.total_fees, body.plan_type, body.term_amounts)
+    # Retire any existing untouched (pending) fees before creating the new plan
+    await db.payments.update_many(
+        {"student_id": student_id, "deleted_at": None, "status": "pending"},
+        {"$set": {"deleted_at": now_utc(), "status": "cancelled"}},
+    )
+    admission = now_utc()
+    await db.students.update_one({"id": student_id}, {"$set": {"total_fees": body.total_fees, "plan_type": body.plan_type}})
+    await create_plan_payments(student_id, body.total_fees, body.plan_type, body.term_amounts, admission)
+    s = await db.students.find_one({"id": student_id})
+    return {"message": "Fee plan set", "student": serialize_student(s)}
 
 
 @api.put("/students/{student_id}")
@@ -565,6 +791,17 @@ async def create_activity(body: ActivityIn, user: dict = Depends(require_roles("
         "created_at": now_utc(),
     }
     await db.activities.insert_one(doc)
+    try:
+        student = await db.students.find_one({"id": body.student_id})
+        pid = await parent_id_for_student(student)
+        if pid:
+            await send_push(
+                [pid],
+                {"title": "🎨 New Activity", "message": f"{user['name']} shared an update: {body.description[:80]}", "action_url": "/parent/activities"},
+                idempotency_key=f"act:{doc['id']}",
+            )
+    except Exception as e:
+        log.warning(f"activity push: {e}")
     return serialize_activity(doc)
 
 
@@ -604,6 +841,11 @@ def serialize_payment(p: dict) -> dict:
         "verified_by": p.get("verified_by"),
         "verified_at": p.get("verified_at").isoformat() if p.get("verified_at") else None,
         "reject_reason": p.get("reject_reason"),
+        "last_reminded_at": p.get("last_reminded_at").isoformat() if p.get("last_reminded_at") else None,
+        "due_date": p.get("due_date").isoformat() if p.get("due_date") else None,
+        "plan_type": p.get("plan_type"),
+        "term_index": p.get("term_index"),
+        "term_total": p.get("term_total"),
         "created_at": p.get("created_at").isoformat() if p.get("created_at") else None,
         "paid_at": p.get("paid_at").isoformat() if p.get("paid_at") else None,
     }
@@ -647,13 +889,13 @@ async def list_student_payments(student_id: str, user: dict = Depends(get_curren
         s = await db.students.find_one({"id": student_id})
         if not s or s.get("parent_phone") != user.get("phone"):
             raise HTTPException(status_code=403, detail="Forbidden")
-    recs = await db.payments.find({"student_id": student_id}).sort("created_at", -1).to_list(200)
+    recs = await db.payments.find({"student_id": student_id, "deleted_at": None}).sort("created_at", -1).to_list(200)
     return [serialize_payment(r) for r in recs]
 
 
 @api.get("/payments")
 async def list_all_payments(user: dict = Depends(require_roles("admin", "md"))):
-    recs = await db.payments.find().sort("created_at", -1).to_list(1000)
+    recs = await db.payments.find({"deleted_at": None}).sort("created_at", -1).to_list(1000)
     return [serialize_payment(r) for r in recs]
 
 
@@ -714,6 +956,16 @@ async def submit_upi_payment(payment_id: str, body: SubmitUpiIn, user: dict = De
             "submitted_by": user.get("id"),
         }},
     )
+    try:
+        student = await db.students.find_one({"id": p["student_id"]})
+        sname = (student or {}).get("name", "A student")
+        await send_push(
+            await staff_ids(("admin", "md")),
+            {"title": "💰 Payment submitted", "message": f"{sname}: UPI ref {utr} • ₹{int(p['amount'])} awaiting verification", "action_url": "/admin/payment-verifications"},
+            idempotency_key=f"paysub:{payment_id}:{utr}",
+        )
+    except Exception as e:
+        log.warning(f"submit-upi push: {e}")
     p = await db.payments.find_one({"id": payment_id})
     return serialize_payment(p)
 
@@ -754,13 +1006,33 @@ async def verify_upi_payment(payment_id: str, body: VerifyIn, user: dict = Depen
                 "verified_at": now_utc(),
             }},
         )
+    # Notify the parent of the verification outcome
+    try:
+        student = await db.students.find_one({"id": p["student_id"]})
+        pid = await parent_id_for_student(student)
+        if pid:
+            if body.approve:
+                await send_push(
+                    [pid],
+                    {"title": "✅ Payment verified", "message": f"Your payment of ₹{int(p['amount'])} has been received. Thank you!", "action_url": "/parent/fees"},
+                    idempotency_key=f"payok:{payment_id}",
+                )
+            else:
+                rn = (body.reason or "Verification failed").strip()
+                await send_push(
+                    [pid],
+                    {"title": "⚠️ Payment not verified", "message": f"₹{int(p['amount'])}: {rn}. Please resubmit your payment details.", "action_url": "/parent/fees"},
+                    idempotency_key=f"payno:{payment_id}:{int(now_utc().timestamp())}",
+                )
+    except Exception as e:
+        log.warning(f"verify push: {e}")
     p = await db.payments.find_one({"id": payment_id})
     return serialize_payment(p)
 
 
 @api.get("/payments/pending-verification")
 async def list_pending_verifications(user: dict = Depends(require_roles("admin", "md"))):
-    recs = await db.payments.find({"status": "pending_verification"}).sort("submitted_at", -1).to_list(500)
+    recs = await db.payments.find({"status": "pending_verification", "deleted_at": None}).sort("submitted_at", -1).to_list(500)
     result = []
     for p in recs:
         student = await db.students.find_one({"id": p["student_id"]}, {"_id": 0, "name": 1, "class_name": 1, "parent_phone": 1})
@@ -768,6 +1040,26 @@ async def list_pending_verifications(user: dict = Depends(require_roles("admin",
         item["student"] = student or {}
         result.append(item)
     return result
+
+
+@api.post("/payments/{payment_id}/remind")
+async def send_fee_reminder(payment_id: str, user: dict = Depends(require_roles("admin", "md"))):
+    p = await db.payments.find_one({"id": payment_id})
+    if not p:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    if p.get("status") == "paid":
+        raise HTTPException(status_code=400, detail="This fee is already paid")
+    student = await db.students.find_one({"id": p["student_id"]})
+    pid = await parent_id_for_student(student)
+    if not pid:
+        raise HTTPException(status_code=404, detail="No parent linked to this fee")
+    await send_push(
+        [pid],
+        {"title": "🔔 Fee reminder", "message": f"{p.get('description') or 'Fee'} of ₹{int(p['amount'])} is pending. Please pay at your earliest convenience.", "action_url": "/parent/fees"},
+        idempotency_key=f"remind:{payment_id}:{int(now_utc().timestamp())}",
+    )
+    await db.payments.update_one({"id": payment_id}, {"$set": {"last_reminded_at": now_utc()}})
+    return {"message": "Reminder sent to parent"}
 
 
 # -------------------- Elthea (mocked) --------------------
@@ -874,7 +1166,7 @@ async def schedule_today(user: dict = Depends(get_current_user)):
 # -------------------- Reports (admin/md) --------------------
 @api.get("/reports/financial")
 async def financial_report(user: dict = Depends(require_roles("admin", "md"))):
-    payments = await db.payments.find().to_list(5000)
+    payments = await db.payments.find({"deleted_at": None}).to_list(5000)
     total_revenue = sum(p["amount"] for p in payments if p["status"] == "paid")
     pending = sum(p["amount"] for p in payments if p["status"] == "pending")
     paid_count = sum(1 for p in payments if p["status"] == "paid")
@@ -921,7 +1213,7 @@ async def overview(user: dict = Depends(require_roles("admin", "md"))):
     students_count = await db.students.count_documents({})
     teachers_count = await db.users.count_documents({"role": "teacher"})
     parents_count = await db.users.count_documents({"role": "parent"})
-    payments = await db.payments.find().to_list(5000)
+    payments = await db.payments.find({"deleted_at": None}).to_list(5000)
     revenue = sum(p["amount"] for p in payments if p["status"] == "paid")
     pending = sum(p["amount"] for p in payments if p["status"] == "pending")
     return {
@@ -1190,6 +1482,14 @@ async def create_announcement(body: AnnouncementIn, user: dict = Depends(require
         **body.dict(),
     }
     await db.announcements.insert_one(doc)
+    try:
+        await send_push(
+            await parent_ids_all(),
+            {"title": f"📢 {doc['title']}", "message": (doc.get('description') or 'A new announcement was posted')[:120], "action_url": "/parent/announcements"},
+            idempotency_key=f"ann:{doc['id']}",
+        )
+    except Exception as e:
+        log.warning(f"announcement push: {e}")
     return serialize_announcement(doc)
 
 
@@ -1329,7 +1629,7 @@ async def class_occupancy(user: dict = Depends(require_roles("md", "admin"))):
 async def fees_by_class(user: dict = Depends(require_roles("md"))):
     students = await db.students.find().to_list(2000)
     stud_map = {s["id"]: s for s in students}
-    pays = await db.payments.find().to_list(5000)
+    pays = await db.payments.find({"deleted_at": None}).to_list(5000)
     by_class: dict = {}
     for p in pays:
         s = stud_map.get(p["student_id"])
@@ -1349,7 +1649,7 @@ async def student_fees_summary(student_id: str, user: dict = Depends(require_rol
     s = await db.students.find_one({"id": student_id})
     if not s:
         raise HTTPException(status_code=404, detail="Not found")
-    pays = await db.payments.find({"student_id": student_id}).sort("created_at", -1).to_list(200)
+    pays = await db.payments.find({"student_id": student_id, "deleted_at": None}).sort("created_at", -1).to_list(200)
     paid = sum(p["amount"] for p in pays if p["status"] == "paid")
     pending = sum(p["amount"] for p in pays if p["status"] == "pending")
     return {

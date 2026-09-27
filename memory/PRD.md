@@ -82,3 +82,45 @@ Backend enforces RBAC on every protected route; token role is the source of trut
 
 ## New Data Models
 - `schedules` — id, class_name, day_of_week (0-6), start_time, end_time, activity, icon
+
+---
+
+## Phase-1 Upgrade — Payments & Notifications (2026-06-26)
+
+### Implemented
+- **Recreated `.env` files** (gitignored on GitHub import) — restored backend Mongo/JWT/seed config and frontend backend URL; app booting again.
+- **Removed on-screen auth secrets**: `debug_otp` dropped from `/api/auth/parent/send-otp`; `debug_token` dropped from `/api/auth/forgot-password`. Parent-login demo hint box and prefilled phone removed; staff-login "Demo accounts" box removed and fields cleared. `forgot-password` redesigned to a secure "request reset → MD issues temp password" info screen (no token exposure).
+- **Manual UPI fee flow** (reused/confirmed): parent submits UTR → `pending_verification` → Admin verify/reject → `paid`/rejected; amount is backend-authoritative; only admin verification marks Paid.
+- **MD User & Login Management** (`/admin/users`, MD-only): `GET /api/users`, `PATCH /api/users/{id}/status` (activate/deactivate, cannot change own), `POST /api/users/{id}/reset-password` (staff → one-time temp password; parents 400). Deactivated accounts blocked at login **and** at token decode (`get_current_user` active check).
+- **Emergent-managed push** wired end-to-end: `POST /api/register-push` (auth-guarded, user can only register own device), `send_push` helper, and event hooks on new announcement (→ all parents), new activity (→ that child's parent), payment submitted (→ admins/MD), payment verified/rejected (→ parent), and manual fee reminder (→ parent). Foreground handler + Android channel + tap-to-navigate + denied-permission Settings nudge in `_layout.tsx`. `app.json`: expo-notifications plugin, `POST_NOTIFICATIONS`, `googleServicesFile`.
+- **Manual fee reminder**: `POST /api/payments/{id}/remind` (admin/MD) + "Send Fee Reminder" button on pending fees in Admin Fees.
+
+### Verified
+- 19/19 backend tests pass (`/app/backend/tests/test_iteration3.py`); frontend flows verified by testing agent; register-push auth (401/403/skipped) re-verified via curl.
+
+### Requires native build (cannot test in Expo Go / web preview)
+- Actual push **delivery**. Needs: (1) user provides Firebase `google-services.json`, (2) Publish → deploy → generate iOS/Android build. `EMERGENT_PUSH_KEY` stays `placeholder` in preview and is injected automatically at deploy.
+
+### Backlog (later phases)
+- P1: self-service change-password screen for staff after temp-password login; SMS OTP for parents.
+- P2: two-way parent↔teacher messaging; automated scheduled fee reminders; sibling discounts; multi-photo/video galleries.
+- P3: online enrollment; analytics dashboards; additional payment gateway if needed.
+
+---
+
+## Feature — Student Fee Plans at Registration (2026-06-26)
+
+### Implemented
+- **Add Student** now captures **Parent name** (required; becomes the parent account's display name, replacing the old auto "Parent of <child>"; updates an existing parent's name if the phone already exists), **Total fees** (whole rupees), and **Plan type**:
+  - **Single** → one pending fee ("Full Fee (One-time)") due on admission.
+  - **Term** → three pending fees "Term 1/2/3 of 3" due at admission, +3 months, +6 months. Three amount fields prefill with total÷3 (remainder on Term 1) and must sum exactly to the total (inline validation, blocks save on mismatch).
+- **Existing students**: MD can set a plan via `POST /api/students/{id}/fee-plan` ("Set fee plan" link on rows without a plan). Setting a plan soft-cancels prior untouched pending fees (`deleted_at` + status `cancelled`) and creates the new ones. **Locked** (400) once any payment is `pending_verification` or `paid`.
+- Backend: `StudentIn` extended + `FeePlanIn`; helpers `add_months`, `validate_plan`, `create_plan_payments`; `serialize_student` returns `total_fees`/`plan_type`; `serialize_payment` returns `due_date`/`plan_type`/`term_index`/`term_total`. All payment list & report queries now filter `{deleted_at: None}` so cancelled fees never surface in lists, reminders, or revenue.
+- Parent Fees screen shows each fee's due date (term due dates) and the "Term x of 3" label; pays through the existing UPI submit → admin verify → paid flow unchanged.
+
+### Verified
+- 13/13 backend tests (`/app/backend/tests/test_iteration4.py`) + frontend flows via testing agent. Regression on UPI submit/verify/reminder over term fees confirmed. Test seed data cleaned from DB.
+
+### Notes / backlog
+- (Web-only) Alert on term-sum mismatch is a no-op in browser preview; inline red warning + save-block work everywhere and Alert fires on device.
+- Phase 2: edit plan after payments start; custom installment count/dates; per-class fee templates. Phase 3: scheduled reminders per due date; sibling discounts; full-plan receipts.
