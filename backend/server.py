@@ -324,7 +324,7 @@ async def parent_send_otp(body: SendOtpIn):
             "password_hash": None,
             "role": "parent",
             "created_at": now_utc(),
-        }},
+        },
         upsert=True,
     )
     log.info(f"[OTP] OTP dispatched for {phone}")
