@@ -25,7 +25,9 @@
       "edgeToEdgeEnabled": true,
       "package": "com.emergent.nurserydash.qnzmux",
       "googleServicesFile": "./google-services.json",
-      "permissions": ["POST_NOTIFICATIONS"]
+      "permissions": [
+        "POST_NOTIFICATIONS"
+      ]
     },
     "web": {
       "bundler": "metro",

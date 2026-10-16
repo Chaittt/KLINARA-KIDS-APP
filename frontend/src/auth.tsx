@@ -6,6 +6,7 @@ export type User = {
   id: string;
   name: string;
   email: string | null;
+  username?: string | null;
   phone: string | null;
   role: UserRole;
   created_at: string | null;
@@ -15,8 +16,7 @@ type AuthContextType = {
   user: User | null;
   loading: boolean;
   loginStaff: (email: string, password: string) => Promise<User>;
-  sendOtp: (phone: string) => Promise<{ debug_otp?: string }>;
-  verifyOtp: (phone: string, otp: string) => Promise<User>;
+  loginParent: (username: string, password: string) => Promise<User>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 };
@@ -54,18 +54,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return res.user;
   }
 
-  async function sendOtp(phone: string) {
-    return api<{ message: string; debug_otp?: string }>('/auth/parent/send-otp', {
+  async function loginParent(username: string, password: string) {
+    const res = await api<{ access_token: string; user: User }>('/auth/parent/login', {
       method: 'POST',
-      body: { phone },
-      auth: false,
-    });
-  }
-
-  async function verifyOtp(phone: string, otp: string) {
-    const res = await api<{ access_token: string; user: User }>('/auth/parent/verify-otp', {
-      method: 'POST',
-      body: { phone, otp },
+      body: { username, password },
       auth: false,
     });
     await setToken(res.access_token);
@@ -89,7 +81,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, loginStaff, sendOtp, verifyOtp, logout, refreshUser }}>
+    <AuthContext.Provider value={{ user, loading, loginStaff, loginParent, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );

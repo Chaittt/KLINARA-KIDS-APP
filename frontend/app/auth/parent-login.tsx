@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import {
   Image,
   KeyboardAvoidingView,
@@ -18,81 +18,31 @@ import { useAuth } from '../../src/auth';
 
 export default function ParentLogin() {
   const router = useRouter();
-  const { sendOtp, verifyOtp } = useAuth();
-  const [step, setStep] = useState<'phone' | 'otp'>('phone');
-  const [phone, setPhone] = useState('');
-  const [otp, setOtp] = useState('');
-  const [loading, setLoading] = useState(false);
+  const { loginParent } = useAuth();
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPwd, setShowPwd] = useState(false);
   const [err, setErr] = useState('');
-  const [resendIn, setResendIn] = useState(30);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    if (step === 'otp') startResendTimer();
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [step]);
-
-  function startResendTimer() {
-    setResendIn(30);
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
-      setResendIn((s) => {
-        if (s <= 1) {
-          if (timerRef.current) clearInterval(timerRef.current);
-          return 0;
-        }
-        return s - 1;
-      });
-    }, 1000);
-  }
-
-  async function handleSend() {
+  async function handleLogin() {
     setErr('');
-    if (!/^\d{10}$/.test(phone.trim())) {
-      setErr('Enter a valid 10-digit phone number');
-      return;
-    }
+    if (!username.trim()) return setErr('Enter your username');
+    if (!password) return setErr('Enter your password');
     setLoading(true);
     try {
-      await sendOtp(phone.trim());
-      setStep('otp');
-    } catch (e: any) {
-      setErr(e.message || 'Failed to send OTP');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleVerify() {
-    setErr('');
-    if (!/^\d{4,6}$/.test(otp.trim())) {
-      setErr('Enter the OTP');
-      return;
-    }
-    setLoading(true);
-    try {
-      await verifyOtp(phone.trim(), otp.trim());
+      await loginParent(username.trim().toLowerCase(), password);
       // Route guard handles redirection
     } catch (e: any) {
-      setErr(e.message || 'Verification failed');
+      setErr(e.message || 'Login failed');
     } finally {
       setLoading(false);
     }
-  }
-
-  async function handleResend() {
-    if (resendIn > 0) return;
-    await handleSend();
   }
 
   return (
     <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={{ flex: 1 }}
-      >
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <ScrollView
           contentContainerStyle={styles.container}
           keyboardShouldPersistTaps="handled"
@@ -108,65 +58,54 @@ export default function ParentLogin() {
             <Image source={{ uri: LOGO_URL }} style={styles.logo} resizeMode="contain" />
             <H2 style={{ textAlign: 'center' }}>Parent Login</H2>
             <Muted style={{ textAlign: 'center', marginTop: 6 }}>
-              {step === 'phone'
-                ? 'Enter your registered mobile number'
-                : `OTP sent to +91 ${phone}`}
+              Sign in with the details shared by your school
             </Muted>
           </View>
 
-          {step === 'phone' ? (
-            <View>
-              <Input
-                testID="phone-input"
-                label="Mobile Number"
-                keyboardType="phone-pad"
-                placeholder="10-digit number"
-                value={phone}
-                onChangeText={(t) => setPhone(t.replace(/\D/g, '').slice(0, 10))}
-                maxLength={10}
-                error={err}
-              />
-              <Button
-                testID="send-otp-btn"
-                title="Send OTP"
-                onPress={handleSend}
-                loading={loading}
-              />
-            </View>
-          ) : (
-            <View>
-              <Input
-                testID="otp-input"
-                label="Enter OTP"
-                keyboardType="number-pad"
-                placeholder="6-digit code"
-                value={otp}
-                onChangeText={(t) => setOtp(t.replace(/\D/g, '').slice(0, 6))}
-                maxLength={6}
-                error={err}
-              />
-              <Button
-                testID="verify-otp-btn"
-                title="Verify & Login"
-                onPress={handleVerify}
-                loading={loading}
-              />
-              <View style={styles.linkRow}>
-                <TouchableOpacity testID="change-number-btn" onPress={() => setStep('phone')}>
-                  <Text style={styles.link}>Change number</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  testID="resend-otp-btn"
-                  disabled={resendIn > 0}
-                  onPress={handleResend}
-                >
-                  <Text style={[styles.link, resendIn > 0 && { color: colors.textMuted }]}>
-                    {resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend OTP'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
+          <Input
+            testID="parent-username-input"
+            label="Username"
+            autoCapitalize="none"
+            autoCorrect={false}
+            placeholder="Your username"
+            value={username}
+            onChangeText={setUsername}
+            returnKeyType="next"
+          />
+
+          <View style={{ position: 'relative' }}>
+            <Input
+              testID="parent-password-input"
+              label="Password"
+              secureTextEntry={!showPwd}
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder="••••••••"
+              value={password}
+              onChangeText={setPassword}
+              onSubmitEditing={handleLogin}
+              returnKeyType="go"
+              error={err}
+            />
+            <TouchableOpacity
+              testID="parent-toggle-pwd"
+              style={styles.eye}
+              hitSlop={10}
+              onPress={() => setShowPwd((v) => !v)}
+            >
+              <Ionicons name={showPwd ? 'eye-off-outline' : 'eye-outline'} size={20} color={colors.textMuted} />
+            </TouchableOpacity>
+          </View>
+
+          <Button testID="parent-login-btn" title="Login" onPress={handleLogin} loading={loading} />
+
+          <TouchableOpacity
+            testID="parent-forgot-btn"
+            style={{ marginTop: spacing.md, alignItems: 'center', paddingVertical: 8 }}
+            onPress={() => router.push('/auth/parent-forgot')}
+          >
+            <Text style={styles.link}>Forgot password?</Text>
+          </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -189,22 +128,6 @@ const styles = StyleSheet.create({
   },
   head: { alignItems: 'center', marginBottom: spacing.xl },
   logo: { width: 80, height: 80, marginBottom: spacing.md },
-  hintBox: {
-    marginTop: spacing.lg,
-    padding: spacing.md,
-    backgroundColor: '#f5f1e8',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderStyle: 'dashed',
-  },
-  linkRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: spacing.lg },
+  eye: { position: 'absolute', right: 16, top: 38 },
   link: { color: colors.primary, fontWeight: '600', fontSize: 14 },
-  hint: {
-    color: colors.golden,
-    fontSize: 13,
-    marginBottom: spacing.md,
-    textAlign: 'center',
-    fontStyle: 'italic',
-  },
 });

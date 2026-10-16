@@ -16,13 +16,15 @@ import { useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { api } from '../../src/api';
 import { useAuth } from '../../src/auth';
-import { Button, Card, H2, H3, Muted } from '../../src/ui';
+import { Button, Card, H2, H3, Input, Muted } from '../../src/ui';
 import { colors, radii, spacing } from '../../src/theme';
 
 type ManagedUser = {
   id: string;
   name: string;
   email: string | null;
+  username?: string | null;
+  has_login?: boolean;
   phone: string | null;
   role: 'parent' | 'teacher' | 'admin' | 'md';
   class_name?: string | null;
@@ -54,6 +56,35 @@ export default function UserManagement() {
   const [selected, setSelected] = useState<ManagedUser | null>(null);
   const [busy, setBusy] = useState(false);
   const [tempPwd, setTempPwd] = useState<string | null>(null);
+  const [parentPwd, setParentPwd] = useState('');
+  const [parentPwdErr, setParentPwdErr] = useState('');
+  const [parentPwdDone, setParentPwdDone] = useState(false);
+  const [showParentForm, setShowParentForm] = useState(false);
+
+  function openUser(u: ManagedUser) {
+    setSelected(u);
+    setTempPwd(null);
+    setParentPwd('');
+    setParentPwdErr('');
+    setParentPwdDone(false);
+    setShowParentForm(false);
+  }
+
+  async function resetParentPassword(u: ManagedUser) {
+    if (parentPwd.length < 6) return setParentPwdErr('Password must be at least 6 characters');
+    setParentPwdErr('');
+    setBusy(true);
+    try {
+      await api(`/users/${u.id}/reset-password`, { method: 'POST', body: { new_password: parentPwd } });
+      setParentPwd('');
+      setParentPwdDone(true);
+      setShowParentForm(false);
+    } catch (e: any) {
+      setParentPwdErr(e?.message || 'Could not reset password');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -175,13 +206,16 @@ export default function UserManagement() {
           ) : (
             visible.map((u) => {
               const meta = ROLE_META[u.role] || ROLE_META.parent;
-              const login = u.email || (u.phone ? `+91 ${u.phone}` : '—');
+              const login =
+                u.role === 'parent'
+                  ? `${u.username ? `@${u.username}` : 'No login yet'}${u.phone ? ` · +91 ${u.phone}` : ''}`
+                  : u.email || '—';
               return (
                 <TouchableOpacity
                   key={u.id}
                   testID={`user-${u.id}`}
                   activeOpacity={0.85}
-                  onPress={() => { setSelected(u); setTempPwd(null); }}
+                  onPress={() => openUser(u)}
                 >
                   <Card style={[styles.userCard, !u.active && styles.userCardInactive]}>
                     <View style={[styles.avatar, { backgroundColor: `${meta.color}22` }]}>
@@ -218,7 +252,9 @@ export default function UserManagement() {
                   <View style={{ flex: 1 }}>
                     <H3>{selected.name}</H3>
                     <Muted style={{ fontSize: 12, marginTop: 2 }}>
-                      {selected.email || (selected.phone ? `+91 ${selected.phone}` : '—')} · {selected.role.toUpperCase()}
+                      {selected.role === 'parent'
+                        ? selected.username ? `@${selected.username}` : 'No login yet'
+                        : selected.email || '—'} · {selected.role.toUpperCase()}
                     </Muted>
                   </View>
                   <TouchableOpacity onPress={() => setSelected(null)} hitSlop={10}>
@@ -266,13 +302,52 @@ export default function UserManagement() {
                         <Ionicons name="key-outline" size={22} color={colors.primary} />
                         <Text style={styles.actionText}>Reset password (generate temporary)</Text>
                       </TouchableOpacity>
-                    ) : (
+                    ) : !selected.username ? (
                       <View style={styles.infoRow}>
                         <Ionicons name="information-circle-outline" size={18} color={colors.textMuted} />
                         <Muted style={{ flex: 1, fontSize: 12 }}>
-                          Parents sign in with phone + OTP — no password to reset.
+                          This parent has no login yet. Use “Set login” on the Students screen.
                         </Muted>
                       </View>
+                    ) : showParentForm ? (
+                      <View style={{ marginTop: spacing.md }}>
+                        <Input
+                          testID="parent-new-password"
+                          label="New password (min 6 characters)"
+                          value={parentPwd}
+                          onChangeText={setParentPwd}
+                          secureTextEntry
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          error={parentPwdErr}
+                        />
+                        <Button
+                          testID="confirm-parent-reset"
+                          title="Save new password"
+                          onPress={() => resetParentPassword(selected)}
+                          loading={busy}
+                        />
+                      </View>
+                    ) : (
+                      <>
+                        <TouchableOpacity
+                          testID="reset-pwd-btn"
+                          onPress={() => setShowParentForm(true)}
+                          disabled={busy}
+                          style={[styles.actionRow, busy && { opacity: 0.5 }]}
+                        >
+                          <Ionicons name="key-outline" size={22} color={colors.primary} />
+                          <Text style={styles.actionText}>Reset password</Text>
+                        </TouchableOpacity>
+                        {parentPwdDone ? (
+                          <View style={styles.infoRow} testID="parent-reset-done">
+                            <Ionicons name="checkmark-circle" size={18} color={colors.success} />
+                            <Muted style={{ flex: 1, fontSize: 12 }}>
+                              Password updated. Old sessions were signed out. Share the new password with the parent.
+                            </Muted>
+                          </View>
+                        ) : null}
+                      </>
                     )}
 
                     {selected.id === user?.id ? (

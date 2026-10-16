@@ -28,7 +28,65 @@ type Student = {
   age?: number;
   total_fees?: number | null;
   plan_type?: 'single' | 'term' | null;
+  parent_id?: string | null;
+  parent_username?: string | null;
+  parent_has_login?: boolean;
 };
+
+/** Username + password fields used by Add Student and Set Login. */
+function LoginFields({
+  username,
+  setUsername,
+  password,
+  setPassword,
+  prefix,
+  error,
+}: {
+  username: string;
+  setUsername: (v: string) => void;
+  password: string;
+  setPassword: (v: string) => void;
+  prefix: string;
+  error?: string;
+}) {
+  const [show, setShow] = useState(false);
+  return (
+    <>
+      <Input
+        testID={`${prefix}-username`}
+        label="Username"
+        value={username}
+        onChangeText={(t) => setUsername(t.replace(/\s/g, '').toLowerCase())}
+        autoCapitalize="none"
+        autoCorrect={false}
+        placeholder="e.g. anjali.reddy"
+      />
+      <View style={{ position: 'relative' }}>
+        <Input
+          testID={`${prefix}-password`}
+          label="Password (min 6 characters)"
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry={!show}
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder="••••••"
+          error={error}
+        />
+        <TouchableOpacity testID={`${prefix}-toggle-pwd`} style={styles.eye} hitSlop={10} onPress={() => setShow((v) => !v)}>
+          <Ionicons name={show ? 'eye-off-outline' : 'eye-outline'} size={20} color={colors.textMuted} />
+        </TouchableOpacity>
+      </View>
+    </>
+  );
+}
+
+function loginInputError(username: string, password: string): string | null {
+  if (!/^[a-z0-9._@+-]{3,50}$/.test(username.trim().toLowerCase()))
+    return 'Username must be 3-50 characters: letters, numbers, . _ - @ +';
+  if (password.length < 6) return 'Password must be at least 6 characters';
+  return null;
+}
 
 type PlanType = 'single' | 'term';
 
@@ -157,6 +215,31 @@ export default function AdminStudents() {
   const [planType, setPlanType] = useState<PlanType>('single');
   const [terms, setTerms] = useState<[string, string, string]>(['', '', '']);
   const [saving, setSaving] = useState(false);
+  const [pUsername, setPUsername] = useState('');
+  const [pPassword, setPPassword] = useState('');
+  const [existingLogin, setExistingLogin] = useState<string | null>(null);
+
+  // Set-login (existing parent) modal state
+  const [loginStudent, setLoginStudent] = useState<Student | null>(null);
+  const [lUsername, setLUsername] = useState('');
+  const [lPassword, setLPassword] = useState('');
+  const [lErr, setLErr] = useState('');
+  const [lSaving, setLSaving] = useState(false);
+
+  // When a full phone is entered, check whether this parent already has a login (sibling)
+  useEffect(() => {
+    setExistingLogin(null);
+    if (!/^\d{10}$/.test(parentPhone)) return;
+    let cancelled = false;
+    api<{ exists: boolean; username: string | null }>(`/parents/lookup?phone=${parentPhone}`)
+      .then((r) => {
+        if (!cancelled) setExistingLogin(r.exists && r.username ? r.username : null);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [parentPhone]);
 
   // Set-plan (existing student) modal state
   const [planStudent, setPlanStudent] = useState<Student | null>(null);
@@ -191,6 +274,36 @@ export default function AdminStudents() {
     setTotalFees('');
     setPlanType('single');
     setTerms(['', '', '']);
+    setPUsername('');
+    setPPassword('');
+    setExistingLogin(null);
+  }
+
+  function openSetLogin(s: Student) {
+    setLoginStudent(s);
+    setLUsername('');
+    setLPassword('');
+    setLErr('');
+  }
+
+  async function saveSetLogin() {
+    if (!loginStudent?.parent_id) return;
+    const v = loginInputError(lUsername, lPassword);
+    if (v) return setLErr(v);
+    setLErr('');
+    setLSaving(true);
+    try {
+      await api(`/users/${loginStudent.parent_id}/parent-login`, {
+        method: 'POST',
+        body: { username: lUsername.trim().toLowerCase(), password: lPassword },
+      });
+      setLoginStudent(null);
+      await load();
+    } catch (e: any) {
+      setLErr(e.message || 'Could not save login');
+    } finally {
+      setLSaving(false);
+    }
   }
 
   function validatePlanInput(total: number, type: PlanType, t: [string, string, string]): string | null {
@@ -208,6 +321,10 @@ export default function AdminStudents() {
     if (!name.trim() || !klass.trim() || !parentName.trim() || !/^\d{10}$/.test(parentPhone.trim())) {
       return Alert.alert('Required', 'Student name, class, parent name and a 10-digit parent phone are required');
     }
+    if (!existingLogin) {
+      const loginErr = loginInputError(pUsername, pPassword);
+      if (loginErr) return Alert.alert('Parent login', loginErr);
+    }
     const planErr = validatePlanInput(total, planType, terms);
     if (planErr) return Alert.alert('Fee plan', planErr);
 
@@ -224,6 +341,8 @@ export default function AdminStudents() {
           total_fees: total,
           plan_type: planType,
           term_amounts: planType === 'term' ? terms.map((t) => parseInt(t, 10)) : null,
+          parent_username: existingLogin ? null : pUsername.trim().toLowerCase(),
+          parent_password: existingLogin ? null : pPassword,
         },
       });
       setShowAdd(false);
@@ -352,6 +471,12 @@ export default function AdminStudents() {
                       <Text style={styles.setPlanText}>Set fee plan</Text>
                     </TouchableOpacity>
                   ) : null}
+                  {isMD && item.parent_id && !item.parent_has_login ? (
+                    <TouchableOpacity testID={`setlogin-${item.id}`} onPress={() => openSetLogin(item)} style={styles.setPlanBtn}>
+                      <Ionicons name="key-outline" size={13} color={colors.golden} />
+                      <Text style={styles.setPlanText}>Set login</Text>
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
                 <TouchableOpacity
                   testID={`del-${item.id}`}
@@ -389,6 +514,23 @@ export default function AdminStudents() {
               <Input testID="add-age" label="Age (optional)" value={age} onChangeText={setAge} keyboardType="number-pad" />
 
               <View style={styles.divider} />
+              <Text style={styles.sectionTitle}>Parent Login</Text>
+              {existingLogin ? (
+                <View style={styles.existingBox} testID="existing-login-box">
+                  <Ionicons name="checkmark-circle" size={16} color={colors.success} />
+                  <Text style={styles.existingText}>Existing login: {existingLogin}</Text>
+                </View>
+              ) : (
+                <LoginFields
+                  prefix="add-parent"
+                  username={pUsername}
+                  setUsername={setPUsername}
+                  password={pPassword}
+                  setPassword={setPPassword}
+                />
+              )}
+
+              <View style={styles.divider} />
               <PlanFields
                 totalFees={totalFees}
                 setTotalFees={setTotalFees}
@@ -424,6 +566,30 @@ export default function AdminStudents() {
               />
               <Button title="Save Fee Plan" onPress={saveSetPlan} loading={pSaving} testID="confirm-set-plan" style={{ marginTop: spacing.md }} />
               <Button title="Cancel" variant="ghost" onPress={() => setPlanStudent(null)} style={{ marginTop: 8 }} />
+            </Card>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Set Parent Login for an existing parent */}
+      <Modal visible={!!loginStudent} animationType="slide" transparent onRequestClose={() => setLoginStudent(null)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBg}>
+          <ScrollView contentContainerStyle={{ padding: spacing.lg }} keyboardShouldPersistTaps="handled">
+            <Card>
+              <H3>Set Parent Login</H3>
+              <Muted style={{ marginTop: 4, marginBottom: spacing.md }}>
+                Parent of {loginStudent?.name} · +91 {loginStudent?.parent_phone}
+              </Muted>
+              <LoginFields
+                prefix="setlogin"
+                username={lUsername}
+                setUsername={setLUsername}
+                password={lPassword}
+                setPassword={setLPassword}
+                error={lErr}
+              />
+              <Button title="Save Login" onPress={saveSetLogin} loading={lSaving} testID="confirm-set-login" style={{ marginTop: spacing.sm }} />
+              <Button title="Cancel" variant="ghost" onPress={() => setLoginStudent(null)} style={{ marginTop: 8 }} testID="cancel-set-login" />
             </Card>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -467,6 +633,17 @@ const styles = StyleSheet.create({
   setPlanText: { fontSize: 12, color: colors.golden, fontWeight: '700' },
   modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   divider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.md },
+  sectionTitle: { fontSize: 14, fontWeight: '700', color: colors.text, marginBottom: spacing.sm },
+  eye: { position: 'absolute', right: 16, top: 38 },
+  existingBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    padding: 12,
+    borderRadius: radii.md,
+    backgroundColor: colors.success + '18',
+  },
+  existingText: { fontSize: 13, fontWeight: '600', color: colors.success, flex: 1 },
   planRow: { flexDirection: 'row', gap: spacing.sm },
   planOption: {
     flex: 1,

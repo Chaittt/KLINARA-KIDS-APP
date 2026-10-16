@@ -4,7 +4,7 @@ import pytest
 import requests
 
 BASE_URL = (os.environ.get("EXPO_PUBLIC_BACKEND_URL")
-            or "https://multi-role-school-1.preview.emergentagent.com").rstrip("/")
+            or "https://little-klinara.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 
 

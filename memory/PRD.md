@@ -13,7 +13,7 @@ Cross-platform preschool management app (React Native Expo + FastAPI + MongoDB) 
 ## Roles & Auth
 | Role | Login method | Default credentials |
 |------|--------------|---------------------|
-| Parent | Phone + OTP (mock `123456`) | 9999999999 / 123456 |
+| Parent | Username + password (set by MD) | anjali.reddy / Parent@123 |
 | Teacher | Email + password (bcrypt) | teacher@klinara.com / Teacher@123 |
 | Admin | Email + password | admin@klinara.com / Admin@123 |
 | MD | Email + password | md@klinara.com / MD@123456 |
@@ -124,3 +124,24 @@ Backend enforces RBAC on every protected route; token role is the source of trut
 ### Notes / backlog
 - (Web-only) Alert on term-sum mismatch is a no-op in browser preview; inline red warning + save-block work everywhere and Alert fires on device.
 - Phase 2: edit plan after payments start; custom installment count/dates; per-class fee templates. Phase 3: scheduled reminders per due date; sibling discounts; full-plan receipts.
+
+
+---
+
+## Feature: Parent Username + Password Login (2026-10, iteration 5)
+
+### Implemented
+- `POST /api/auth/parent/login`: case-insensitive username, generic 401, 5 failures cause a 15-min lock (429), deactivated users get 403. OTP endpoints, `twilio_otp.py` and the OTP UI were removed.
+- Add Student (MD): Parent Login section with a unique username (across all users) and a password of at least 6 characters. A sibling with the same phone reuses the existing login (`GET /api/parents/lookup`).
+- "Set login" chip and modal for legacy parents (`POST /api/users/{id}/parent-login`). `GET /api/students` (admin/MD) returns `parent_has_login` and `parent_username`.
+- MD Users screen: parent Reset password with a typed new password (`reset-password` with `{new_password}`) bumps `token_version`, so old sessions get 401.
+- Parent Forgot password screen (`/auth/parent-forgot`).
+- `.env` files recreated again (missing after import). Local Mongo, new JWT secret, `PARENT_USERNAME`/`PARENT_PASSWORD` seed.
+- Tests: `backend/tests/test_iteration5.py` (22 passed) plus frontend flows verified.
+
+### Backlog
+- Phase 2: parent self change-password, MD edits parent username, share login via WhatsApp.
+- Phase 3: forced change on first login, Admin manages parent logins, login activity history.
+
+### Security note
+`backend/TEST` in the repo contains real MongoDB Atlas credentials and a Twilio SID. Rotate them and delete the file from the repo.

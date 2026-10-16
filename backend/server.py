@@ -17,8 +17,7 @@ from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, status
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
-
-from twilio_otp import parent_phone_is_registered, start_verification, check_verification
+import re
 
 
 # -------------------- Setup --------------------
@@ -29,8 +28,6 @@ db = client[os.environ["DB_NAME"]]
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_TTL_MIN = 60 * 24  # 1 day for mobile convenience
-OTP_TTL_SECONDS = 120
-OTP_MAX_ATTEMPTS = 5
 LOGIN_LOCKOUT_THRESHOLD = 5
 LOGIN_LOCKOUT_MINUTES = 15
 
@@ -57,10 +54,37 @@ def verify_password(pw: str, hashed: str) -> bool:
         return False
 
 
-def create_access_token(user_id: str, role: str) -> str:
+USERNAME_RE = re.compile(r"^[a-z0-9._@+-]{3,50}$")
+MIN_PASSWORD_LEN = 6
+DUMMY_HASH = bcrypt.hashpw(b"timing-dummy-password", bcrypt.gensalt()).decode("utf-8")
+
+
+def normalize_username(raw: str) -> str:
+    username = (raw or "").strip().lower()
+    if not USERNAME_RE.match(username):
+        raise HTTPException(status_code=400, detail="Username must be 3-50 characters: letters, numbers, . _ - @ +")
+    return username
+
+
+def validate_new_password(pw: str) -> str:
+    if not pw or len(pw) < MIN_PASSWORD_LEN:
+        raise HTTPException(status_code=400, detail=f"Password must be at least {MIN_PASSWORD_LEN} characters")
+    return pw
+
+
+async def ensure_username_free(username: str, exclude_id: Optional[str] = None) -> None:
+    q: dict = {"$or": [{"username": username}, {"email": username}]}
+    if exclude_id:
+        q["id"] = {"$ne": exclude_id}
+    if await db.users.find_one(q, {"_id": 0, "id": 1}):
+        raise HTTPException(status_code=409, detail="Username already taken")
+
+
+def create_access_token(user_id: str, role: str, token_version: int = 0) -> str:
     payload = {
         "sub": user_id,
         "role": role,
+        "tv": token_version,
         "exp": now_utc() + timedelta(minutes=ACCESS_TOKEN_TTL_MIN),
         "iat": now_utc(),
         "type": "access",
@@ -75,6 +99,7 @@ def serialize_user(u: dict) -> dict:
         "id": u.get("id"),
         "name": u.get("name"),
         "email": u.get("email"),
+        "username": u.get("username"),
         "phone": u.get("phone"),
         "role": u.get("role"),
         "created_at": u.get("created_at").isoformat() if u.get("created_at") else None,
@@ -97,6 +122,8 @@ async def get_current_user(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="User not found")
     if user.get("active") is False:
         raise HTTPException(status_code=401, detail="Account deactivated")
+    if user.get("token_version", 0) != payload.get("tv", 0):
+        raise HTTPException(status_code=401, detail="Session expired. Please sign in again.")
     return user
 
 
@@ -163,13 +190,18 @@ class StaffLoginIn(BaseModel):
     password: str
 
 
-class SendOtpIn(BaseModel):
-    phone: str
+class ParentLoginIn(BaseModel):
+    username: str = Field(..., max_length=100)
+    password: str = Field(..., max_length=72)
 
 
-class VerifyOtpIn(BaseModel):
-    phone: str
-    otp: str
+class ParentCredentialsIn(BaseModel):
+    username: str
+    password: str
+
+
+class ResetPasswordByMdIn(BaseModel):
+    new_password: Optional[str] = None
 
 
 class ForgotPasswordIn(BaseModel):
@@ -191,6 +223,8 @@ class StudentIn(BaseModel):
     total_fees: int
     plan_type: Literal["single", "term"]
     term_amounts: Optional[List[int]] = None
+    parent_username: Optional[str] = None
+    parent_password: Optional[str] = None
 
 
 class FeePlanIn(BaseModel):
@@ -270,7 +304,7 @@ async def staff_login(body: StaffLoginIn, request: Request):
     await db.login_attempts.delete_one({"identifier": identifier})
     if user.get("active") is False:
         raise HTTPException(status_code=403, detail="Account deactivated. Contact your administrator.")
-    token = create_access_token(user["id"], user["role"])
+    token = create_access_token(user["id"], user["role"], user.get("token_version", 0))
     return {"access_token": token, "token_type": "bearer", "user": serialize_user(user)}
 
 
@@ -302,48 +336,34 @@ async def reset_password(body: ResetPasswordIn):
     return {"message": "Password reset successfully"}
 
 
-# -------------------- Auth: Parent OTP --------------------
-@api.post("/auth/parent/send-otp")
-async def parent_send_otp(body: SendOtpIn):
-    phone = body.phone.strip()
-    user = await db.users.find_one({"phone": phone, "role": "parent"})
-    linked_student = await db.students.find_one({"parent_phone": phone})
+# -------------------- Auth: Parent (username + password) --------------------
+@api.post("/auth/parent/login")
+async def parent_login(body: ParentLoginIn):
+    username = (body.username or "").strip().lower()
+    identifier = f"parent:{username}"
+    now = now_utc()
 
-    if not parent_phone_is_registered(bool(user), bool(linked_student)):
-        raise HTTPException(status_code=404, detail="Phone number not registered")
+    rec = await db.login_attempts.find_one({"identifier": identifier})
+    if rec and rec.get("locked_until") and rec["locked_until"] > now:
+        raise HTTPException(status_code=429, detail=f"Too many failed attempts. Try again in {LOGIN_LOCKOUT_MINUTES} minutes.")
 
-    # If a student is linked to this phone but no parent account exists yet
-    # (e.g. parent_phone was set via a student update rather than student creation),
-    # create the parent account now so verify-otp can find it afterwards.
-    if not user and linked_student:
-        parent_id = str(uuid.uuid4())
-        await db.users.insert_one({
-            "id": parent_id,
-            "name": f"Parent of {linked_student.get('name', 'Student')}",
-            "phone": phone,
-            "password_hash": None,
-            "role": "parent",
-            "created_at": now_utc(),
-        },
-        upsert=True,
-    )
-    log.info(f"[OTP] OTP dispatched for {phone}")
-    return {"message": "OTP sent successfully", "expires_in": OTP_TTL_SECONDS}
+    user = await db.users.find_one({"username": username, "role": "parent"})
+    hashed = user.get("password_hash") if user else None
+    # Always run a bcrypt check so unknown usernames take the same time
+    valid = verify_password(body.password, hashed or DUMMY_HASH) and bool(hashed)
+    if not valid:
+        # Start a fresh count if a previous lock has already expired
+        count = 1 if not rec or (rec.get("locked_until") and rec["locked_until"] <= now) else rec.get("count", 0) + 1
+        update = {"count": count, "locked_until": None}
+        if count >= LOGIN_LOCKOUT_THRESHOLD:
+            update["locked_until"] = now + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+        await db.login_attempts.update_one({"identifier": identifier}, {"$set": update}, upsert=True)
+        raise HTTPException(status_code=401, detail="Invalid username or password")
 
-
-@api.post("/auth/parent/verify-otp")
-async def parent_verify_otp(body: VerifyOtpIn):
-    phone = body.phone.strip()
-    approved = check_verification(phone, body.otp)
-    if not approved:
-        raise HTTPException(status_code=401, detail="Invalid or expired OTP")
-
-    user = await db.users.find_one({"phone": phone, "role": "parent"})
-    if not user:
-        raise HTTPException(status_code=404, detail="Parent not found")
+    await db.login_attempts.delete_one({"identifier": identifier})
     if user.get("active") is False:
         raise HTTPException(status_code=403, detail="Account deactivated. Contact your school administrator.")
-    token = create_access_token(user["id"], "parent")
+    token = create_access_token(user["id"], "parent", user.get("token_version", 0))
     return {"access_token": token, "token_type": "bearer", "user": serialize_user(user)}
 
 
@@ -384,6 +404,8 @@ def serialize_user_admin(u: dict) -> dict:
         "id": u.get("id"),
         "name": u.get("name"),
         "email": u.get("email"),
+        "username": u.get("username"),
+        "has_login": bool(u.get("username")) if u.get("role") == "parent" else True,
         "phone": u.get("phone"),
         "role": u.get("role"),
         "class_name": u.get("class_name"),
@@ -424,15 +446,63 @@ def _gen_temp_password() -> str:
 
 
 @api.post("/users/{uid}/reset-password")
-async def reset_user_password(uid: str, user: dict = Depends(require_roles("md"))):
+async def reset_user_password(uid: str, body: Optional[ResetPasswordByMdIn] = None,
+                              user: dict = Depends(require_roles("md"))):
     target = await db.users.find_one({"id": uid})
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
+    new_pw = body.new_password if body else None
     if target.get("role") == "parent":
-        raise HTTPException(status_code=400, detail="Parents sign in with phone + OTP; there is no password to reset")
-    temp = _gen_temp_password()
-    await db.users.update_one({"id": uid}, {"$set": {"password_hash": hash_password(temp)}})
+        if not target.get("username"):
+            raise HTTPException(status_code=400, detail="This parent has no login yet. Use 'Set login' first.")
+        if not new_pw:
+            raise HTTPException(status_code=400, detail="Enter a new password")
+    if new_pw:
+        validate_new_password(new_pw)
+        temp = new_pw
+    else:
+        temp = _gen_temp_password()
+    await db.users.update_one(
+        {"id": uid},
+        {"$set": {"password_hash": hash_password(temp)}, "$inc": {"token_version": 1}},
+    )
+    await db.login_attempts.delete_many({"identifier": f"parent:{target.get('username')}"})
+    if new_pw:
+        return {"message": "Password updated. The user's other sessions were signed out."}
     return {"temp_password": temp, "message": "Temporary password generated. Share it securely with the user."}
+
+
+@api.post("/users/{uid}/parent-login")
+async def set_parent_login(uid: str, body: ParentCredentialsIn, user: dict = Depends(require_roles("md"))):
+    target = await db.users.find_one({"id": uid, "role": "parent"})
+    if not target:
+        raise HTTPException(status_code=404, detail="Parent not found")
+    if target.get("username"):
+        raise HTTPException(status_code=400, detail="Login already set. Use Reset password instead.")
+    username = normalize_username(body.username)
+    validate_new_password(body.password)
+    await ensure_username_free(username, exclude_id=uid)
+    await db.users.update_one(
+        {"id": uid},
+        {"$set": {"username": username, "password_hash": hash_password(body.password)}},
+    )
+    t = await db.users.find_one({"id": uid})
+    return serialize_user_admin(t)
+
+
+@api.get("/parents/lookup")
+async def lookup_parent(phone: str, user: dict = Depends(require_roles("md", "admin"))):
+    p = await db.users.find_one({"phone": phone.strip(), "role": "parent"}, {"_id": 0, "password_hash": 0})
+    if not p:
+        return {"exists": False, "username": None, "name": None}
+    return {"exists": True, "username": p.get("username"), "name": p.get("name")}
+
+
+@api.get("/users/username-available")
+async def username_available(username: str, user: dict = Depends(require_roles("md"))):
+    uname = normalize_username(username)
+    taken = await db.users.find_one({"$or": [{"username": uname}, {"email": uname}]}, {"_id": 0, "id": 1})
+    return {"username": uname, "available": not taken}
 
 
 # -------------------- Students --------------------
@@ -466,6 +536,16 @@ async def list_students(user: dict = Depends(get_current_user)):
         students = await db.students.find(q).to_list(500)
     else:  # admin / md
         students = await db.students.find().to_list(1000)
+        parent_ids = list({s.get("parent_id") for s in students if s.get("parent_id")})
+        parents = await db.users.find({"id": {"$in": parent_ids}}, {"_id": 0, "id": 1, "username": 1}).to_list(3000)
+        uname = {p["id"]: p.get("username") for p in parents}
+        return [
+            serialize_student(s) | {
+                "parent_username": uname.get(s.get("parent_id")),
+                "parent_has_login": bool(uname.get(s.get("parent_id"))),
+            }
+            for s in students
+        ]
     return [serialize_student(s) for s in students]
 
 
@@ -537,19 +617,29 @@ async def create_student(body: StudentIn, user: dict = Depends(require_roles("ad
         raise HTTPException(status_code=400, detail="Parent name is required")
 
     parent = await db.users.find_one({"phone": body.parent_phone, "role": "parent"})
+    creds: dict = {}
+    if not (parent and parent.get("username")):
+        # Parent needs a login: only the MD can create one
+        if user["role"] != "md":
+            raise HTTPException(status_code=403, detail="Only the MD can create parent logins")
+        username = normalize_username(body.parent_username or "")
+        validate_new_password(body.parent_password or "")
+        await ensure_username_free(username, exclude_id=parent["id"] if parent else None)
+        creds = {"username": username, "password_hash": hash_password(body.parent_password)}
+
     if parent:
         parent_id = parent["id"]
         # Keep the parent account's display name in sync with the entered value
-        await db.users.update_one({"id": parent_id}, {"$set": {"name": parent_name}})
+        await db.users.update_one({"id": parent_id}, {"$set": {"name": parent_name, **creds}})
     else:
         parent_id = str(uuid.uuid4())
         await db.users.insert_one({
             "id": parent_id,
             "name": parent_name,
             "phone": body.parent_phone,
-            "password_hash": None,
             "role": "parent",
             "created_at": now_utc(),
+            **creds,
         })
 
     admission = now_utc()
@@ -1730,6 +1820,9 @@ async def seed():
             log.warning(f"email index drop: {_e}")
         await db.users.create_index("email", unique=True, sparse=True)
         await db.users.create_index("phone", sparse=True)
+        # Clean legacy null usernames so the sparse unique index can be built
+        await db.users.update_many({"username": None}, {"$unset": {"username": ""}})
+        await db.users.create_index("username", unique=True, sparse=True)
         await db.students.create_index("id", unique=True)
         await db.password_reset_tokens.create_index("expires_at", expireAfterSeconds=0)
     except Exception as e:
@@ -1795,12 +1888,16 @@ async def seed():
             "id": parent_id,
             "name": "Anjali Reddy",
             "phone": parent_phone,
-            "password_hash": None,
             "role": "parent",
             "created_at": now_utc(),
         })
     else:
         parent_id = parent["id"]
+    # Demo parent login (username + password)
+    await db.users.update_one({"id": parent_id}, {"$set": {
+        "username": os.environ["PARENT_USERNAME"].lower(),
+        "password_hash": hash_password(os.environ["PARENT_PASSWORD"]),
+    }})
 
     # Student
     students = await db.students.find({"parent_phone": parent_phone}).to_list(10)
