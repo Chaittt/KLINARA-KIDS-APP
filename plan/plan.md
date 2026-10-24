@@ -1,59 +1,63 @@
-# Klinara Kids — Parent Login with Username & Password
+# Klinara Kids: One Add Student Form for MD and Admin
 
-Parents stop logging in with phone number + OTP. They log in with a username and password, the same way Teacher, Admin and MD do.
-The MD creates each parent's login while registering the student and can add or reset logins for existing parents.
+There will be a single Add Student form with the same fields everywhere. It is used from the Students page and from the Setup (Settings) page.
+Admin can also add students and create the parent's username and password while doing so.
 
 ## Who it's for
-- **MD:** creates and manages parent logins, the same way they already do for teachers.
-- **Parents:** sign in with the username and password the school gives them. No OTP wait and no SMS needed.
+- **MD:** gets the same complete form wherever they add a student.
+- **Admin:** can now register new students, including the parent's login, without needing the MD.
 
 ## Core features and experience
-1. **New Parent Login page**
-   - Shows the Klinara logo, a "Parent Login" title and the subtitle "Sign in with the details shared by your school".
-   - Two fields: **Username** and **Password**. The password has a show/hide eye icon.
-   - A teal **Login** button with a loading state.
-   - A clear error message on a wrong username or password. The message is the same whichever one is wrong.
-   - A "Forgot password?" link opens a simple screen: "Please contact the school office. The MD will reset your password."
-   - The phone-number step, OTP step, resend timer and "Change number" link are removed completely.
-2. **Parent login on Add Student (MD)**
-   - The Add Student form gets a new "Parent Login" section with **Username** and **Password** fields, next to Parent name and phone.
-   - The username must be unique across all users. A duplicate shows "Username already taken".
-   - The password must be at least 6 characters, the same rule as teachers.
-   - If the parent phone already belongs to a parent who has a login (a sibling joining), the section shows "Existing login: <username>". The new child is linked to that parent account and no new login is needed.
-3. **"Set login" for existing parents (MD)**
-   - Parents added before this change have no username yet. Their student rows show a **Set login** chip, like the existing "Set fee plan" chip.
-   - Tapping it opens a small form with Username and Password. After saving, the parent can log in right away.
-4. **Reset parent password (MD)**
-   - On the MD's Users screen, parents now have the same **Reset password** action as staff. The MD types a new password. The parent's old sessions are signed out.
-   - Activate/deactivate stays as it is today. Deactivated parents can't log in.
-5. **Security, the same as staff:** 5 wrong attempts lock the account for 15 minutes. Passwords are stored securely and are never shown again after saving.
+1. **One shared Add Student form**
+   - The Students page and the Setup page both open the same form with the same fields, in this order:
+     - Student full name, class, age (optional)
+     - Parent name, parent phone (10 digits)
+     - Parent Login: username + password (min 6 characters, show/hide eye)
+     - Fee plan: total fees, Single or Term (x3) with the 3 term amounts
+   - The old short form on the Setup page is removed. It only asked for name, class, phone and age and still mentioned the phone OTP login. Its "Parent will auto-login via phone OTP" text goes with it.
+   - Rules are the same everywhere:
+     - Usernames must be unique; a duplicate shows "Username already taken".
+     - The password must be at least 6 characters.
+     - Term amounts must add up to the total.
+     - If the parent phone already has a login (a sibling joining), the form shows "Existing login: <username>" and reuses it.
+   - After saving, the student list and the class strength counts refresh on both pages.
+2. **Admin can add students**
+   - The **Add** button on the Students page works for Admin. Today it is greyed out with "MD only".
+   - The Setup page shows Admin an **Add Student** button that opens the same form.
+   - Admin sets the parent's username and password as part of adding the student.
+3. **What stays MD-only**
+   - "Set login" for existing parents who have no login yet
+   - Resetting a parent's password (Users screen)
+   - Deleting students
+   - Adding teachers and admins, User & Login Management, fees, salaries and UPI settings on the Setup page
 
 ## User flow
-- **MD registers a child:** Students → Add → child details, parent name, parent phone → Parent Login (username + password) → fee plan → Save. The MD shares the username and password with the parent.
-- **MD fixes an existing parent:** Students → row with "Set login" → enters username + password → Save.
-- **MD resets a forgotten password:** Users → parent → Reset password → enters a new password → shares it with the parent.
-- **Parent:** Welcome → Parent → enters username + password → Login → lands on the parent home screen as today.
+- **Admin or MD, from Students:** Students → Add → fill the form → Add Student → the student shows up in the list.
+- **Admin or MD, from Setup:** Setup → Add Student → same form → Add Student → class strength updates.
+- **Parent:** logs in with the username and password set by the Admin or MD, as today.
 
 ## UI/UX feel
-The Parent Login page uses the same layout as Staff Login, so both feel like one app. It keeps the cream background, logo on top, rounded inputs, a teal button and the back button. The new MD fields sit inside the existing Add Student form and student list styling, with no redesign of other screens.
+The form looks the way the current Students page form does today: a slide-up card, rounded inputs, a "Parent Login" section heading and a teal Add Student button. The Setup page keeps its current layout. Admin simply sees an Add Student button there too.
 
 ## Implementation phases
-### Phase 1 — MVP (built now)
-New username + password Parent Login page. OTP login removed from the app and the server. Username + password fields in Add Student, with a uniqueness check. "Set login" for existing parents. MD password reset for parents. Lockout after repeated failures. Updated Forgot password message.
+### Phase 1 (MVP, built now)
+- One shared Add Student form used on the Students and Setup pages
+- The outdated Setup form removed
+- Admin allowed to add students and set the parent login while doing so
+- All other MD-only actions stay as they are
 
-### Phase 2 — Later
-Parents can change their own password from their profile. The MD can edit a parent's username. A one-tap "Share login details" button sends the credentials to the parent on WhatsApp.
+### Phase 2 (later)
+- Admin can use "Set login" for existing parents
+- Edit student details (class, parent name, phone) from the student page
+- Duplicate-phone warning that shows the sibling's name
 
-### Phase 3 — Later
-Optional forced password change on first login. Admin (not only MD) allowed to manage parent logins if needed. Login activity history for the MD.
+### Phase 3 (later)
+- Bulk import of students from a spreadsheet
+- An activity log showing who (MD or Admin) added each student
 
 ## Assumptions
-- Only the MD can create, set or reset parent logins, the same as for teachers. Admin can't.
-- The username is free text chosen by the MD (letters, numbers, dot, underscore, hyphen or an email). It isn't case-sensitive and must be unique across all users.
-- Parents keep using the password the MD gives them. There is no forced change at first login.
-- The parent phone number stays in the system as contact information and for linking siblings. It is no longer used to log in.
-- One parent account can have more than one child. Adding a sibling reuses the existing login.
-- Parents already in the system can't log in until the MD uses "Set login" for them.
-- Anyone already signed in with the old OTP login stays signed in until their session expires (1 day). After that, they need the new username and password.
-- Teacher, Admin and MD login doesn't change.
-- The earlier plan (chat, multi-photo posts, staff password change) is dropped for now.
+- Parents keep logging in with a username and password. Email isn't required, but a username may be an email address.
+- Admin can create a parent login only while adding a student. "Set login" for existing parents and password resets stay MD-only.
+- Deleting students stays MD-only.
+- The Setup page's Add Teacher and Add Admin buttons stay MD-only. The Admin sees only the Add Student button in that section.
+- The form fields and rules are exactly those of today's Students page form. No new fields are added.

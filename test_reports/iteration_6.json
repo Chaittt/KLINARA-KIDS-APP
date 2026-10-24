@@ -1,0 +1,41 @@
+{
+  "summary": "Iteration 6: Tested the shared Add Student form (AddStudentModal) for Admin and MD on the Students and Setup pages, plus the MD-only backend restrictions. Backend: 13/13 new tests passed. The 23-test iteration 5 suite also passed after one obsolete test was updated (it expected Admin to get 403 on POST /students; Admin is now allowed). UI (375x667): every flow passed. Admin add-student-btn opens add-student-form with all fields listed, the eye toggle works, Term x3 splits 30000 into 10000 x3, the student appears in the list (27 -> 28), and the new parent logs in at /auth/parent-login and lands on /parent/home. Admin Setup shows students-card and btn-add-student, has no btn-add-teacher, btn-add-admin or staff-mgmt-card, and Class Strength updates after saving. Phone 9876543210 shows 'Existing login: anjali.reddy' and hides the username/password fields. No OTP text anywhere. MD Setup btn-add-student opens the same shared form, and btn-add-teacher opens the teacher form (s-name, s-email, s-pwd, s-class, save-staff). Regression: MD Set fee plan (15000 as 3 terms) and Set login both saved, and that parent can log in. Only minor issues were found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/students", "issue": "Admin can set credentials for an EXISTING parent who has no login (a legacy parent) just by adding a sibling with the same phone plus a username and password (server.py:621-631). This works around the MD-only POST /users/{id}/parent-login. Confirm this is intended."},
+      {"endpoint": "POST /api/students", "issue": "The backend does not check that parent_phone is 10 digits (only the frontend checks). StudentIn accepts any string."},
+      {"endpoint": "POST /api/students", "issue": "Not atomic: the parent user is created or updated with credentials before the student is inserted, so a failed insert leaves a parent login with no student."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Students list delete icon", "issue": "Admin still sees a grey trash icon on every student. Tapping it calls Alert.alert('MD only'), which does nothing on web. Hide del-{id} for non-MD users. Reference: app/admin/students.tsx:225-234", "testID": "del-{id}", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "AddStudentModal", "issues": ["The password eye toggle is only 20x23px. hitSlop does not enlarge the tap area on web, so it is below the 44px minimum (StudentForm.tsx:60, styles.eye).", "Class is free text, so typos create new classes in Class Strength (stray entries like 'S' already exist in the data). Use a picker built from the CLASSES list."]},
+      {"screen": "Setup > Class Strength", "issues": ["Pluralization: shows '1 students'."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration6.py", "/app/backend/tests/test_iteration5.py", "/app/backend/tests/seed_legacy_ui.py", "/app/test_reports/pytest/pytest_iteration6.xml"],
+  "action_items": [
+    "Decide whether Admin may set the login of an existing parent who has none via POST /students (sibling path). If not, return 403 for admin when the parent exists without a username.",
+    "Hide the delete (trash) icon for Admin on the Students page.",
+    "Add a 10-digit check for parent_phone in the backend StudentIn model.",
+    "Optional: replace the free-text Class input with a picker; make the eye toggle tap area at least 44px; fix '1 students' pluralization."
+  ],
+  "critical_code_review_comments": [
+    "StudentForm.tsx: PlanFields useEffect re-splits the term amounts whenever the total changes, so any custom amounts the user typed are overwritten. This is acceptable but worth knowing.",
+    "Validation messages use Alert.alert, which does nothing on web (pre-existing pattern), so web users get no feedback on invalid input.",
+    "test_iteration5.py creates TEST_ students without cleaning them up; many 'TEST_xxxx Kid' records are building up in the Students list."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration5.py (updated the obsolete test expecting Admin 403 on POST /students to expect 200)", "/app/backend/tests/test_iteration6.py (new)", "/app/backend/tests/seed_legacy_ui.py (new)"],
+  "success_rate": {"backend": "100% (35 passed, 1 skipped)", "frontend": "100% of the requested flows"},
+  "seed_data_creation": "Seeded via Mongo one TEST legacy parent (no login) and a TEST_Legacy Kid without a fee plan for the Set login and Set fee plan UI regression. Those three test students and their parents and payments were deleted after testing. Students created by test_iteration6.py are deleted by its fixture teardown (their parents and payments remain).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use unique usernames (uuid suffix). Modals slide in, so wait about 1s and scroll elements into view with el.scrollIntoView() before clicking, otherwise Playwright reports 'outside of viewport'. Run tests/seed_legacy_ui.py to get a parent without a login for testing Set login.",
+  "rca_of_issue": ""
+}

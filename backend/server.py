@@ -615,13 +615,17 @@ async def create_student(body: StudentIn, user: dict = Depends(require_roles("ad
     parent_name = body.parent_name.strip()
     if not parent_name:
         raise HTTPException(status_code=400, detail="Parent name is required")
+    body.parent_phone = body.parent_phone.strip()
+    if not re.fullmatch(r"\d{10}", body.parent_phone):
+        raise HTTPException(status_code=400, detail="Parent phone must be 10 digits")
 
     parent = await db.users.find_one({"phone": body.parent_phone, "role": "parent"})
     creds: dict = {}
     if not (parent and parent.get("username")):
-        # Parent needs a login: only the MD can create one
-        if user["role"] != "md":
-            raise HTTPException(status_code=403, detail="Only the MD can create parent logins")
+        # Existing parent without a login: "Set login" is MD-only
+        if parent and user["role"] != "md":
+            raise HTTPException(status_code=403, detail="This parent has no login yet. Ask the MD to use 'Set login' first.")
+        # Parent needs a login: MD or Admin sets it while adding the student
         username = normalize_username(body.parent_username or "")
         validate_new_password(body.parent_password or "")
         await ensure_username_free(username, exclude_id=parent["id"] if parent else None)

@@ -201,10 +201,10 @@ class TestStudentParentLogin:
         assert all(s.get("parent_username") == uname for s in same_phone)
         assert all(s.get("parent_has_login") is True for s in same_phone)
 
-    def test_admin_cannot_create_parent_login(self, admin_headers):
-        # Admin role cannot create a login for a brand-new parent
+    def test_admin_can_create_parent_login(self, admin_headers):
+        # Iteration 6: Admin is now allowed to create a login for a brand-new parent
         r = _mk_student(admin_headers, _uname("adm"), _phone(), password="Pwd@12345")
-        assert r.status_code == 403
+        assert r.status_code == 200, r.text
 
 
 # ======================= Lookup + username-available =======================

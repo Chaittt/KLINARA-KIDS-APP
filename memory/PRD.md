@@ -145,3 +145,20 @@ Backend enforces RBAC on every protected route; token role is the source of trut
 
 ### Security note
 `backend/TEST` in the repo contains real MongoDB Atlas credentials and a Twilio SID. Rotate them and delete the file from the repo.
+
+
+---
+
+## Feature: One Add Student Form for MD and Admin (2026-10, iteration 6)
+
+### Implemented
+- Shared `AddStudentModal` (`src/components/StudentForm.tsx`) used on the Students and Setup pages. Fields: student name, class, age, parent name, phone, parent login (username + password), fee plan.
+- The old Setup student form (phone + OTP text) was removed.
+- Admin can add students and create a new parent's login. The Add button is enabled for Admin, and Setup shows Admin a Students card with Add Student.
+- MD-only remains: Set login for existing login-less parents (Admin gets 403 even via the sibling path), reset password, delete (trash icon hidden for Admin), add teacher/admin, fees, salaries, UPI.
+- Backend validates a 10-digit parent phone. Eye toggle touch target is 44px. "1 student" singular.
+- Tests: `backend/tests/test_iteration6.py` + iteration 5 (35 passed).
+
+### Backlog
+- Phase 2: Admin Set login for existing parents; edit student details; duplicate-phone warning showing the sibling's name; class picker instead of free text.
+- Phase 3: bulk import from a spreadsheet; an activity log of who added each student.

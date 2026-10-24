@@ -7,6 +7,7 @@ import { api } from '../../src/api';
 import { useAuth } from '../../src/auth';
 import { Button, Card, H2, H3, Input, Muted } from '../../src/ui';
 import { colors, radii, spacing } from '../../src/theme';
+import { AddStudentModal } from '../../src/components/StudentForm';
 
 type FeeItem = { class_name: string; monthly_amount: number };
 type Salary = { user: any; monthly_amount: number | null; currency: string };
@@ -42,13 +43,12 @@ export default function AdminSetup() {
   const [curModal, setCurModal] = useState<Curriculum | null>(null);
   const [curYear, setCurYear] = useState(''); const [curContent, setCurContent] = useState('');
 
-  const [staffModal, setStaffModal] = useState<null | 'teacher' | 'admin' | 'student'>(null);
+  const [staffModal, setStaffModal] = useState<null | 'teacher' | 'admin'>(null);
+  const [showAddStudent, setShowAddStudent] = useState(false);
   const [sName, setSName] = useState('');
   const [sEmail, setSEmail] = useState('');
   const [sPwd, setSPwd] = useState('');
   const [sClass, setSClass] = useState('');
-  const [sPhone, setSPhone] = useState('');
-  const [sAge, setSAge] = useState('');
   const [saving, setSaving] = useState(false);
 
   const [upiId, setUpiId] = useState('');
@@ -117,7 +117,7 @@ export default function AdminSetup() {
     } catch (e: any) { Alert.alert('Error', e.message); }
   }
 
-  function resetStaffForm() { setSName(''); setSEmail(''); setSPwd(''); setSClass(''); setSPhone(''); setSAge(''); }
+  function resetStaffForm() { setSName(''); setSEmail(''); setSPwd(''); setSClass(''); }
 
   async function saveUpi() {
     if (!upiId.includes('@') || upiId.length < 5) return Alert.alert('Invalid UPI ID', 'Should look like name@bank');
@@ -137,14 +137,11 @@ export default function AdminSetup() {
       if (staffModal === 'teacher') {
         if (!sName.trim() || !sEmail.includes('@') || sPwd.length < 6) throw new Error('Name, valid email, password (6+) required');
         await api('/teachers', { method: 'POST', body: { name: sName.trim(), email: sEmail.toLowerCase().trim(), password: sPwd, class_name: sClass || null } });
-      } else if (staffModal === 'admin') {
+      } else {
         if (!sName.trim() || !sEmail.includes('@') || sPwd.length < 6) throw new Error('Name, valid email, password (6+) required');
         await api('/admins', { method: 'POST', body: { name: sName.trim(), email: sEmail.toLowerCase().trim(), password: sPwd } });
-      } else {
-        if (!sName.trim() || !sClass.trim() || !/^\d{10}$/.test(sPhone.trim())) throw new Error('Name, class, and 10-digit parent phone required');
-        await api('/students', { method: 'POST', body: { name: sName.trim(), class_name: sClass.trim(), parent_phone: sPhone.trim(), age: sAge ? parseInt(sAge, 10) : null } });
       }
-      Alert.alert('Success', staffModal === 'student' ? 'Student added — parent can now log in via phone OTP.' : 'Account created. Share credentials with the user.');
+      Alert.alert('Success', 'Account created. Share credentials with the user.');
       setStaffModal(null); resetStaffForm(); await load();
     } catch (e: any) { Alert.alert('Error', e.message || 'Failed'); } finally { setSaving(false); }
   }
@@ -169,7 +166,7 @@ export default function AdminSetup() {
             occ.map((c) => (
               <View key={c.class_name} style={styles.row}>
                 <Text style={styles.rowLabel}>{c.class_name}</Text>
-                <View style={styles.chip}><Text style={styles.chipText}>{c.count} students</Text></View>
+                <View style={styles.chip}><Text style={styles.chipText}>{c.count} {c.count === 1 ? 'student' : 'students'}</Text></View>
               </View>
             ))}
         </Card>
@@ -216,6 +213,15 @@ export default function AdminSetup() {
             ))}
         </Card>
 
+        {/* Admin: Add Student only */}
+        {!isMD ? (
+          <Card style={{ marginBottom: spacing.md }} testID="students-card">
+            <H3>Students</H3>
+            <Muted style={{ marginTop: 4, marginBottom: 8 }}>Register a new student and create the parent&apos;s login</Muted>
+            <Button testID="btn-add-student" title="+ Add Student" onPress={() => setShowAddStudent(true)} />
+          </Card>
+        ) : null}
+
         {/* MD-only: Staff & Students */}
         {isMD ? (
           <Card style={{ marginBottom: spacing.md }} testID="staff-mgmt-card">
@@ -233,7 +239,7 @@ export default function AdminSetup() {
               <Button testID="btn-add-teacher" title="+ Add Teacher" onPress={() => { resetStaffForm(); setStaffModal('teacher'); }} style={{ flex: 1, minWidth: 140 }} />
               <Button testID="btn-add-admin" title="+ Add Admin" variant="secondary" onPress={() => { resetStaffForm(); setStaffModal('admin'); }} style={{ flex: 1, minWidth: 140 }} />
             </View>
-            <Button testID="btn-add-student" title="+ Add Student" onPress={() => { resetStaffForm(); setStaffModal('student'); }} style={{ marginTop: 8 }} />
+            <Button testID="btn-add-student" title="+ Add Student" onPress={() => setShowAddStudent(true)} style={{ marginTop: 8 }} />
 
             <View style={styles.divider} />
             <Muted style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Existing Admins ({admins.length})</Muted>
@@ -383,39 +389,22 @@ export default function AdminSetup() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Staff/Student modal (MD only) */}
+      {/* Shared Add Student form (MD + Admin) */}
+      <AddStudentModal visible={showAddStudent} onClose={() => setShowAddStudent(false)} onSaved={load} />
+
+      {/* Staff modal (MD only) */}
       <Modal visible={!!staffModal} animationType="slide" transparent>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBg}>
           <ScrollView contentContainerStyle={{ padding: spacing.lg }} keyboardShouldPersistTaps="handled">
             <Card>
-              <H3>{staffModal === 'teacher' ? 'Add Teacher' : staffModal === 'admin' ? 'Add Admin' : 'Add Student'}</H3>
-              <Muted style={{ marginTop: 4 }}>
-                {staffModal === 'student'
-                  ? 'Parent will auto-login via phone OTP after student is added.'
-                  : 'The staff member will log in using this email + password.'}
-              </Muted>
+              <H3>{staffModal === 'teacher' ? 'Add Teacher' : 'Add Admin'}</H3>
+              <Muted style={{ marginTop: 4 }}>The staff member will log in using this email + password.</Muted>
               <Input testID="s-name" label="Full Name" value={sName} onChangeText={setSName} containerStyle={{ marginTop: spacing.md }} />
-              {staffModal !== 'student' ? (
-                <>
-                  <Input testID="s-email" label="Email" value={sEmail} onChangeText={setSEmail} keyboardType="email-address" autoCapitalize="none" />
-                  <Input testID="s-pwd" label="Password (min 6)" value={sPwd} onChangeText={setSPwd} secureTextEntry />
-                  {staffModal === 'teacher' ? (
-                    <Input testID="s-class" label="Class (optional)" value={sClass} onChangeText={setSClass} placeholder="e.g. Sunshine" />
-                  ) : null}
-                </>
-              ) : (
-                <>
-                  <Input testID="s-class" label="Class" value={sClass} onChangeText={setSClass} placeholder="e.g. Sunshine" />
-                  <Input
-                    testID="s-phone"
-                    label="Parent Phone (10-digit)"
-                    value={sPhone}
-                    onChangeText={(t) => setSPhone(t.replace(/\D/g, '').slice(0, 10))}
-                    keyboardType="phone-pad"
-                  />
-                  <Input testID="s-age" label="Age (optional)" value={sAge} onChangeText={setSAge} keyboardType="number-pad" />
-                </>
-              )}
+              <Input testID="s-email" label="Email" value={sEmail} onChangeText={setSEmail} keyboardType="email-address" autoCapitalize="none" />
+              <Input testID="s-pwd" label="Password (min 6)" value={sPwd} onChangeText={setSPwd} secureTextEntry />
+              {staffModal === 'teacher' ? (
+                <Input testID="s-class" label="Class (optional)" value={sClass} onChangeText={setSClass} placeholder="e.g. Sunshine" />
+              ) : null}
               <Button testID="save-staff" title="Create" onPress={saveStaff} loading={saving} />
               <Button title="Cancel" variant="ghost" onPress={() => { setStaffModal(null); resetStaffForm(); }} style={{ marginTop: 8 }} />
             </Card>
