@@ -166,6 +166,11 @@ export default function UserManagement() {
           <Muted style={{ fontSize: 12 }}>Manage logins & account access</Muted>
         </View>
       </View>
+      <TouchableOpacity testID="open-deletion-requests" onPress={() => router.push('/admin/deletion-requests')} style={styles.delLink}>
+        <Ionicons name="trash-bin-outline" size={18} color={colors.danger} />
+        <Text style={styles.delLinkText}>Deletion requests</Text>
+        <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+      </TouchableOpacity>
 
       {/* Role filter chips */}
       <View style={styles.chipWrap}>
@@ -382,6 +387,11 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border,
   },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
+  delLink: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: 48, paddingHorizontal: spacing.md,
+    marginHorizontal: spacing.lg, borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
+  },
+  delLinkText: { flex: 1, color: colors.danger, fontWeight: '700', fontSize: 14 },
   chipWrap: { height: 56, justifyContent: 'center' },
   chipRow: { paddingHorizontal: spacing.lg, gap: spacing.sm, alignItems: 'center' },
   chip: {

@@ -1,8 +1,12 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { colors } from '../../src/theme';
+import { useAuth } from '../../src/auth';
+import { PrivacyConsent } from '../../src/components/PrivacyConsent';
 
 export default function ParentLayout() {
+  const { user } = useAuth();
+  if (user?.role === 'parent' && !user.privacy_consent_at) return <PrivacyConsent />;
   return (
     <Tabs
       screenOptions={{

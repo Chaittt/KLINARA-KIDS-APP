@@ -1,0 +1,44 @@
+{
+  "summary": "Phase 3 compliance tested end-to-end. Backend 12/12 pytest pass (public privacy/delete HTML, public deletion form 400/422/429, consent + Elthea 403/200 gating, in-app deletion request idempotency + status, MD list/reject/complete with full erase of a fresh parent incl. students/complaints, payments retained with retained_reason, erased parent login 401 + old token 401, unmatched complete 400, non-MD 403). Frontend all requested flows pass at 375px: first-login privacy consent (Elthea switch off by default, agree -> /parent/home, not shown again), Profile privacy-card (Elthea toggle shows/hides reassess-btn, consent-date, privacy link opens /api/privacy), delete-account sheet -> deletion-pending, rejected status shown back to parent, MD Deletion Requests list (unmatched warning + Delete disabled, reject requires reason, delete -> dr-sheet -> toast -> COMPLETED), public web form (bad phone error, success message). Main finding: the public form rate limit uses the ingress pod IP rather than the client IP, so it does not work as intended.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/public/deletion-requests", "issue": "Rate limit uses request.client.host, which is the k8s ingress pod IP (DB shows only 10.11.1.72 / 10.11.1.73), not the real client. Effect: (a) one client got 9 x 200 before the first 429, because requests are spread across 2 pods; (b) the limit is global, so 5 requests from anyone through one pod in an hour block every other parent for that hour. Use the first entry of X-Forwarded-For (or X-Real-IP), falling back to client.host.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/public/deletion-requests", "issue": "Matching uses phone alone (username is only a fallback), so anyone who knows a parent's phone can file a request that shows as 'matched' with Delete enabled for the MD. Consider requiring phone + username to match, or labelling it 'matched by phone, verify identity' in the MD UI."},
+      {"endpoint": "erase_parent_data", "issue": "Does not delete the parent's password_reset_tokens. The completed deletion_request still keeps parent_name, phone and child_name (username, note and ip are nulled). Decide and document whether these are kept as an audit trail."},
+      {"endpoint": "serialize_deletion.matched", "issue": "matched = bool(parent_id) and does not check that the account still exists. A second pending request for an already-erased parent shows Delete enabled, and complete then returns 400."},
+      {"endpoint": "GET /api/delete-account", "issue": "The form uses a relative fetch('public/deletion-requests'). If the page is opened as /api/delete-account/ (trailing slash), it posts to the wrong URL. Use the absolute path '/api/public/deletion-requests'."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "src/ui.tsx Muted", "issue": "Muted did not pass testID through, so testIDs consent-date, deletion-rejected and dr-pending-count were missing from the DOM. FIXED by T1 (added a testID prop).", "testID": "consent-date", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "admin/users header", "issues": ["At 375px the title 'User Management' breaks mid-word ('Managemen' / 't') because the 'Deletion requests' pill squeezes it. Shrink the title, move the pill below it, or use an icon-only button.", "open-deletion-requests is 36px tall, below the 44px minimum."]},
+      {"screen": "PrivacyConsent / Parent Profile", "issues": ["The Elthea Switch hit area is 40x20 on web, below 44px. Make the whole row pressable.", "In the off state the switch track uses colors.border on a white card, so it has low contrast and is hard to see."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration7_compliance.py", "/app/backend/tests/seed_iter7_ui.py", "/app/test_reports/pytest/pytest_iteration7.xml"],
+  "action_items": [
+    "HIGH: Base the public deletion-request rate limit on the real client IP (X-Forwarded-For first hop / X-Real-IP), not request.client.host.",
+    "Fix the admin/users header title wrapping at 375px, and give the Deletion requests button a touch target of at least 44px.",
+    "Consider stricter identity matching for web deletion requests (phone + username), or flag phone-only matches in the MD UI.",
+    "Optional: delete password_reset_tokens on erase; use an absolute fetch path on the delete page; make Elthea switch rows fully tappable."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 2318 lines; consider splitting the compliance routes into their own module.",
+    "Parent Profile only uses /students[0], so a parent with several children sees one child.",
+    "Home correctly hides start-elthea-btn for Aarav because he already has GROW results (grow-card shown instead). Re-assess is only on Profile, and it is gated correctly."
+  ],
+  "updated_files": ["/app/frontend/src/ui.tsx"],
+  "success_rate": {"backend": "100% (12/12) - rate-limit behaviour flawed as noted", "frontend": "100% of requested flows"},
+  "seed_data_creation": "Created fresh TEST_ parents/students (erased via the flows under test), TEST_ web requests, and an anjali request (rejected). All cleaned up: deletion_requests is empty, anjali's privacy_consent_at/elthea_consent are unset again, consent_log entries from the last 3h and orphan retained payments of erased TEST students are deleted, Aarav is intact.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Login response key is access_token (not token). Use the class 'Sunshine' for new students. Public rate limit counts per ingress pod IP (10.11.1.72/73); delete TEST_ deletion_requests docs if you hit 429. Never complete a request for anjali.reddy.",
+  "rca_of_issue": "Rate limit: behind the k8s ingress, request.client.host is the ingress pod IP. Verified via deletion_requests.ip values: 12 rapid requests from one client produced 200 x9, then 429 x3."
+}

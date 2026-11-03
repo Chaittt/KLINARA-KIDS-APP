@@ -185,7 +185,7 @@ export default function ParentHome() {
             </Muted>
             <GrowBars scores={student.elthea_grow} />
           </Card>
-        ) : student ? (
+        ) : student && user?.elthea_consent ? (
           <Card style={{ marginTop: spacing.md, alignItems: 'center' }}>
             <Ionicons name="sparkles" size={28} color={colors.golden} />
             <H3 style={{ marginTop: 8 }}>Elthea Assessment</H3>

@@ -162,3 +162,43 @@ Backend enforces RBAC on every protected route; token role is the source of trut
 ### Backlog
 - Phase 2: Admin Set login for existing parents; edit student details; duplicate-phone warning showing the sibling's name; class picker instead of free text.
 - Phase 3: bulk import from a spreadsheet; an activity log of who added each student.
+
+---
+
+## Phase 3: Compliance & Store Assets (2026-11, iteration 7)
+
+### Implemented
+- Public pages (no login): `/api/privacy` (policy v1.0) and `/api/delete-account` (request form → `POST /api/public/deletion-requests`).
+  - Rate limit: 5 requests/hour per real client IP (X-Forwarded-For).
+  - An account counts as matched only if the phone AND the username or child's name agree.
+- In-app parent deletion: Profile → Delete my account → confirm sheet → pending status (`/api/me/deletion-request`).
+- MD screen `admin/deletion-requests`, linked from User Management.
+  - Delete data calls `erase_parent_data`: a hard delete, scoped to that parent and run only on explicit MD action. It removes the user, children, attendance, activities, complaints, consent log and reset tokens. Payments are kept with `retained_reason`.
+  - Reject requires a reason, which the parent sees.
+- First-login privacy notice (`PrivacyConsent`, gated in `parent/_layout`). Consent is saved with timestamp and policy version in `consent_log`.
+- Separate Elthea opt-in, off by default:
+  - Backend: launch/complete return 403 without it.
+  - UI: Start/Re-assess are hidden without it.
+  - The toggle and policy link live in Profile → Privacy.
+- Store pack in `/app/store_assets/` (+ `/app/store_assets.zip`, also `GET /api/store-assets.zip` for MD):
+  - Screenshots: 6 in Play 1080×1920 and 6 in Apple 1320×2868
+  - Feature graphic: 1024×500
+  - Text: `store_listing.md` (descriptions within limits, data-safety and App Privacy answers)
+  - Legal: `legal/privacy_policy.md` (for the website) and `legal/DPDP_Act_review.md`
+  - Tools: `tools/capture.py` and `tools/frame.py` to regenerate
+- Fixed the radar chart side labels clipping ("Wonder"/"Relate").
+- Tests: `backend/tests/test_iteration7_compliance.py` (12 passed). Run with `EXPO_PUBLIC_BACKEND_URL` set.
+
+### Backlog
+- Phase 2:
+  - Move the policy to klinarakids.com once direct links work
+  - Email the MD/parent about deletion requests
+  - Consent history export
+  - Tablet screenshots
+- Phase 3 (before May 2027):
+  - Stronger parental identity check (admission-form consent clause)
+  - Breach procedure
+  - Auto-cleanup after a child leaves
+  - Elthea data processing agreement
+  - App preview video
+  - Telugu/Hindi policy

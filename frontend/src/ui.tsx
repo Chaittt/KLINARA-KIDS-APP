@@ -102,8 +102,8 @@ export function H3({ children, style }: { children: React.ReactNode; style?: Tex
 export function Body({ children, style }: { children: React.ReactNode; style?: TextStyle }) {
   return <Text style={[styles.body, style]}>{children}</Text>;
 }
-export function Muted({ children, style }: { children: React.ReactNode; style?: TextStyle }) {
-  return <Text style={[styles.body, { color: colors.textMuted }, style]}>{children}</Text>;
+export function Muted({ children, style, testID }: { children: React.ReactNode; style?: TextStyle; testID?: string }) {
+  return <Text testID={testID} style={[styles.body, { color: colors.textMuted }, style]}>{children}</Text>;
 }
 
 const styles = StyleSheet.create({

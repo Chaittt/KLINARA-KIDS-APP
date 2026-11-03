@@ -67,6 +67,7 @@ export default function AdminLayout() {
       <Tabs.Screen name="staff-attendance" options={{ href: null }} />
       <Tabs.Screen name="payment-verifications" options={{ href: null }} />
       <Tabs.Screen name="users" options={{ href: null }} />
+      <Tabs.Screen name="deletion-requests" options={{ href: null }} />
     </Tabs>
   );
 }

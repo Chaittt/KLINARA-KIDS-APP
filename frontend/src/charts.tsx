@@ -8,7 +8,7 @@ type GrowScores = { G: number; R: number; O: number; W: number };
 export function GrowRadarChart({ scores, size = 240 }: { scores: GrowScores; size?: number }) {
   const cx = size / 2;
   const cy = size / 2;
-  const radius = size / 2 - 30;
+  const radius = size / 2 - 56; // leaves room for the side labels so they never clip
 
   const labels: { key: keyof GrowScores; label: string; color: string }[] = [
     { key: 'G', label: 'Grow', color: colors.golden },
@@ -90,7 +90,8 @@ export function GrowRadarChart({ scores, size = 240 }: { scores: GrowScores; siz
         })}
         {/* Labels */}
         {labels.map((l, i) => {
-          const p = toXY(angles[i], radius + 16);
+          const side = angles[i] === 0 ? 'start' : angles[i] === 180 ? 'end' : 'middle';
+          const p = toXY(angles[i], radius + (side === 'middle' ? 16 : 8));
           return (
             <SvgText
               key={`lbl-${i}`}
@@ -99,7 +100,7 @@ export function GrowRadarChart({ scores, size = 240 }: { scores: GrowScores; siz
               fill={colors.text}
               fontSize={12}
               fontWeight="700"
-              textAnchor="middle"
+              textAnchor={side}
             >
               {l.label}
             </SvgText>

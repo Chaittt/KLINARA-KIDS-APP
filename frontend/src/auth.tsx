@@ -9,6 +9,8 @@ export type User = {
   username?: string | null;
   phone: string | null;
   role: UserRole;
+  privacy_consent_at?: string | null;
+  elthea_consent?: boolean;
   created_at: string | null;
 };
 

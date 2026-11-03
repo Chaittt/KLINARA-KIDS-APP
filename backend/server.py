@@ -102,6 +102,8 @@ def serialize_user(u: dict) -> dict:
         "username": u.get("username"),
         "phone": u.get("phone"),
         "role": u.get("role"),
+        "privacy_consent_at": u.get("privacy_consent_at").isoformat() if u.get("privacy_consent_at") else None,
+        "elthea_consent": bool(u.get("elthea_consent")),
         "created_at": u.get("created_at").isoformat() if u.get("created_at") else None,
     }
 
@@ -1164,6 +1166,8 @@ async def elthea_launch(student_id: str, user: dict = Depends(get_current_user))
         raise HTTPException(status_code=404, detail="Student not found")
     if user["role"] == "parent" and s.get("parent_phone") != user.get("phone"):
         raise HTTPException(status_code=403, detail="Forbidden")
+    if user["role"] == "parent" and not user.get("elthea_consent"):
+        raise HTTPException(status_code=403, detail="Turn on Elthea in Profile → Privacy to start an assessment")
     session_id = uuid.uuid4().hex
     # Mocked launch URL — in production this would call api.elthea.xyz/v1/launch
     launch_url = f"https://api.elthea.xyz/mock/assessment/{session_id}?student={student_id}"
@@ -1175,6 +1179,8 @@ async def elthea_complete(body: EltheaCompleteIn, user: dict = Depends(get_curre
     s = await db.students.find_one({"id": body.student_id})
     if not s:
         raise HTTPException(status_code=404, detail="Student not found")
+    if user["role"] == "parent" and (s.get("parent_phone") != user.get("phone") or not user.get("elthea_consent")):
+        raise HTTPException(status_code=403, detail="Forbidden")
     await db.students.update_one(
         {"id": body.student_id},
         {"$set": {
@@ -2096,6 +2102,212 @@ async def seed_extras():
 
 
 # -------------------- App wiring --------------------
+# -------------------- Compliance: privacy, consent, data deletion --------------------
+from fastapi.responses import HTMLResponse
+from compliance_pages import privacy_html, delete_html, POLICY_VERSION
+
+
+@api.get("/privacy", response_class=HTMLResponse, include_in_schema=False)
+async def privacy_page():
+    return HTMLResponse(privacy_html())
+
+
+@api.get("/delete-account", response_class=HTMLResponse, include_in_schema=False)
+async def delete_account_page():
+    return HTMLResponse(delete_html())
+
+
+@api.get("/store-assets.zip", include_in_schema=False)
+async def store_assets_zip(user: dict = Depends(require_roles("md"))):
+    from fastapi.responses import FileResponse
+    path = ROOT_DIR.parent / "store_assets.zip"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Store pack not generated")
+    return FileResponse(path, filename="klinara_store_assets.zip", media_type="application/zip")
+
+
+class ConsentIn(BaseModel):
+    accept_privacy: Optional[bool] = None
+    elthea: Optional[bool] = None
+
+
+@api.post("/me/consent")
+async def set_consent(body: ConsentIn, user: dict = Depends(require_roles("parent"))):
+    update: dict = {}
+    if body.accept_privacy:
+        update["privacy_consent_at"] = now_utc()
+        update["privacy_policy_version"] = POLICY_VERSION
+    if body.elthea is not None:
+        update["elthea_consent"] = body.elthea
+        update["elthea_consent_at"] = now_utc()
+    if update:
+        await db.users.update_one({"id": user["id"]}, {"$set": update})
+        await db.consent_log.insert_one({
+            "id": str(uuid.uuid4()), "user_id": user["id"],
+            "changes": {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in update.items()},
+            "created_at": now_utc(),
+        })
+    u = await db.users.find_one({"id": user["id"]})
+    return serialize_user(u)
+
+
+class PublicDeletionIn(BaseModel):
+    parent_name: str = Field(..., min_length=1, max_length=100)
+    username: Optional[str] = Field(None, max_length=100)
+    phone: str = Field(..., max_length=15)
+    child_name: str = Field(..., min_length=1, max_length=100)
+    note: Optional[str] = Field(None, max_length=500)
+
+
+class InAppDeletionIn(BaseModel):
+    reason: Optional[str] = Field(None, max_length=500)
+
+
+class RejectDeletionIn(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500)
+
+
+def serialize_deletion(d: dict) -> dict:
+    iso = lambda v: v.isoformat() if v else None  # noqa: E731
+    return {
+        "id": d.get("id"),
+        "source": d.get("source"),
+        "status": d.get("status"),
+        "parent_id": d.get("parent_id"),
+        "parent_name": d.get("parent_name"),
+        "username": d.get("username"),
+        "phone": d.get("phone"),
+        "child_name": d.get("child_name"),
+        "note": d.get("note"),
+        "reject_reason": d.get("reject_reason"),
+        "matched": bool(d.get("parent_id")),
+        "created_at": iso(d.get("created_at")),
+        "resolved_at": iso(d.get("resolved_at")),
+    }
+
+
+@api.post("/public/deletion-requests")
+async def public_deletion_request(body: PublicDeletionIn, request: Request):
+    phone = body.phone.strip()
+    if not re.fullmatch(r"\d{10}", phone):
+        raise HTTPException(status_code=400, detail="Enter the 10-digit mobile number registered with the school")
+    ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+          or request.headers.get("x-real-ip", "").strip()
+          or (request.client.host if request.client else "unknown"))
+    recent = await db.deletion_requests.count_documents({"ip": ip, "created_at": {"$gt": now_utc() - timedelta(hours=1)}})
+    if recent >= 5:
+        raise HTTPException(status_code=429, detail="Too many requests. Please email admissions@klinarakids.com.")
+    uname = (body.username or "").strip().lower() or None
+    # Match an account only when the phone AND (username or a child's name) agree, so knowing a number isn't enough
+    parent = None
+    candidate = await db.users.find_one({"role": "parent", "phone": phone})
+    if candidate:
+        kids = await db.students.find({"$or": [{"parent_id": candidate["id"]}, {"parent_phone": phone}]}, {"name": 1}).to_list(20)
+        kid_names = {(k.get("name") or "").strip().lower() for k in kids}
+        if (uname and candidate.get("username") == uname) or body.child_name.strip().lower() in kid_names:
+            parent = candidate
+    doc = {
+        "id": str(uuid.uuid4()), "source": "web", "status": "pending",
+        "parent_id": parent["id"] if parent else None,
+        "parent_name": body.parent_name.strip(), "username": uname, "phone": phone,
+        "child_name": body.child_name.strip(), "note": (body.note or "").strip() or None,
+        "ip": ip, "created_at": now_utc(), "resolved_at": None,
+    }
+    await db.deletion_requests.insert_one(doc)
+    await send_push(await staff_ids(("md",)), {"title": "New data deletion request", "message": f"{doc['parent_name']} asked to delete their data"})
+    return {"message": "Request received. The school will complete it within 30 days."}
+
+
+@api.get("/me/deletion-request")
+async def my_deletion_request(user: dict = Depends(require_roles("parent"))):
+    d = await db.deletion_requests.find_one({"parent_id": user["id"]}, sort=[("created_at", -1)])
+    return serialize_deletion(d) if d else None
+
+
+@api.post("/me/deletion-request")
+async def create_my_deletion_request(body: InAppDeletionIn, user: dict = Depends(require_roles("parent"))):
+    existing = await db.deletion_requests.find_one({"parent_id": user["id"], "status": "pending"})
+    if existing:
+        return serialize_deletion(existing)
+    kids = await db.students.find({"$or": [{"parent_id": user["id"]}, {"parent_phone": user.get("phone")}]}).to_list(20)
+    doc = {
+        "id": str(uuid.uuid4()), "source": "app", "status": "pending", "parent_id": user["id"],
+        "parent_name": user.get("name"), "username": user.get("username"), "phone": user.get("phone"),
+        "child_name": ", ".join(k.get("name", "") for k in kids) or None,
+        "note": (body.reason or "").strip() or None, "created_at": now_utc(), "resolved_at": None,
+    }
+    await db.deletion_requests.insert_one(doc)
+    await send_push(await staff_ids(("md",)), {"title": "New data deletion request", "message": f"{doc['parent_name']} asked to delete their account"})
+    return serialize_deletion(doc)
+
+
+@api.get("/deletion-requests")
+async def list_deletion_requests(user: dict = Depends(require_roles("md"))):
+    items = await db.deletion_requests.find().sort("created_at", -1).to_list(500)
+    pids = [d["parent_id"] for d in items if d.get("parent_id")]
+    alive = {u["id"] for u in await db.users.find({"id": {"$in": pids}, "role": "parent"}, {"id": 1}).to_list(1000)}
+    out = []
+    for d in items:
+        s = serialize_deletion(d)
+        s["matched"] = d.get("parent_id") in alive
+        out.append(s)
+    return out
+
+
+async def erase_parent_data(parent: dict) -> dict:
+    """Permanently erase a parent account and their children's app data.
+    Fee/payment records are retained (legal/accounting) but de-linked from personal identity."""
+    kids = await db.students.find({"$or": [{"parent_id": parent["id"]}, {"parent_phone": parent.get("phone")}]}).to_list(50)
+    kid_ids = [k["id"] for k in kids]
+    counts = {"students": len(kid_ids)}
+    if kid_ids:
+        counts["attendance"] = (await db.attendance.delete_many({"student_id": {"$in": kid_ids}})).deleted_count
+        counts["activities"] = (await db.activities.delete_many({"student_id": {"$in": kid_ids}})).deleted_count
+        await db.payments.update_many(
+            {"student_id": {"$in": kid_ids}},
+            {"$set": {"retained_reason": "Kept for tax/accounting law after data erasure", "subject_erased_at": now_utc()}},
+        )
+        await db.students.delete_many({"id": {"$in": kid_ids}})
+    counts["complaints"] = (await db.complaints.delete_many({"parent_id": parent["id"]})).deleted_count
+    await db.consent_log.delete_many({"user_id": parent["id"]})
+    await db.password_reset_tokens.delete_many({"user_id": parent["id"]})
+    await db.login_attempts.delete_many({"identifier": f"parent:{parent.get('username')}"})
+    await db.users.delete_one({"id": parent["id"]})
+    return counts
+
+
+@api.post("/deletion-requests/{rid}/complete")
+async def complete_deletion(rid: str, user: dict = Depends(require_roles("md"))):
+    d = await db.deletion_requests.find_one({"id": rid})
+    if not d:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if d.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Request already handled")
+    parent = await db.users.find_one({"id": d.get("parent_id"), "role": "parent"}) if d.get("parent_id") else None
+    if not parent:
+        raise HTTPException(status_code=400, detail="No matching parent account found. Verify the details or reject the request.")
+    counts = await erase_parent_data(parent)
+    await db.deletion_requests.update_one({"id": rid}, {"$set": {
+        "status": "completed", "resolved_at": now_utc(), "resolved_by": user["id"], "erased": counts,
+        # Minimise what we keep about the erased person
+        "username": None, "note": None, "ip": None,
+    }})
+    return {"message": "Data deleted", "erased": counts}
+
+
+@api.post("/deletion-requests/{rid}/reject")
+async def reject_deletion(rid: str, body: RejectDeletionIn, user: dict = Depends(require_roles("md"))):
+    d = await db.deletion_requests.find_one({"id": rid})
+    if not d:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if d.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Request already handled")
+    await db.deletion_requests.update_one({"id": rid}, {"$set": {
+        "status": "rejected", "reject_reason": body.reason.strip(), "resolved_at": now_utc(), "resolved_by": user["id"],
+    }})
+    return serialize_deletion(await db.deletion_requests.find_one({"id": rid}))
+
+
 app.include_router(api)
 
 app.add_middleware(
