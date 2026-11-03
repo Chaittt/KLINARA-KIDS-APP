@@ -5,6 +5,7 @@ load_dotenv(ROOT_DIR / ".env")
 
 import os
 import uuid
+import asyncio
 import logging
 import bcrypt
 import jwt
@@ -148,13 +149,14 @@ _push_client = httpx.AsyncClient(
 )
 
 
-async def send_push(recipients: List[str], data: dict, idempotency_key: Optional[str] = None) -> None:
-    """Relay a push to the Emergent managed push service. Non-blocking: never raises."""
+async def send_push(recipients: List[str], data: dict, idempotency_key: Optional[str] = None) -> bool:
+    """Relay a push to the Emergent managed push service. Non-blocking: never raises. Returns True if every chunk was accepted."""
     recipients = [r for r in (recipients or []) if r]
     if not recipients:
-        return
+        return False
     if "title" not in data or "message" not in data:
-        return
+        return False
+    ok = True
     for i in range(0, len(recipients), 100):
         chunk = recipients[i:i + 100]
         payload: dict = {"recipients": chunk, "data": data}
@@ -164,7 +166,9 @@ async def send_push(recipients: List[str], data: dict, idempotency_key: Optional
             resp = await _push_client.post("/api/v1/push/trigger", json=payload)
             resp.raise_for_status()
         except Exception as e:
+            ok = False
             log.warning(f"Push send failed (non-blocking): {e}")
+    return ok
 
 
 async def parent_ids_all() -> List[str]:
@@ -828,6 +832,7 @@ async def mark_attendance(body: AttendanceIn, user: dict = Depends(require_roles
             {"$set": {"status": body.status, "marked_by": user["id"]}},
         )
         rec = await db.attendance.find_one({"id": existing["id"]})
+        asyncio.create_task(notify_absent(rec))
         return serialize_attendance(rec)
     doc = {
         "id": str(uuid.uuid4()),
@@ -838,7 +843,35 @@ async def mark_attendance(body: AttendanceIn, user: dict = Depends(require_roles
         "created_at": now_utc(),
     }
     await db.attendance.insert_one(doc)
+    asyncio.create_task(notify_absent(doc))
     return serialize_attendance(doc)
+
+
+async def notify_absent(rec: dict) -> None:
+    """Tell the parent their child was marked absent: at most once per child per day, never blocks."""
+    if rec.get("status") != "absent" or rec.get("absent_notified"):
+        return
+    try:
+        claimed = await db.attendance.update_one(
+            {"id": rec["id"], "absent_notified": {"$ne": True}}, {"$set": {"absent_notified": True}}
+        )
+        if not claimed.modified_count:
+            return
+        student = await db.students.find_one({"id": rec["student_id"]})
+        pid = await parent_id_for_student(student)
+        sent = False
+        if pid:
+            first = (student.get("name") or "Your child").split(" ")[0]
+            when = "today" if rec["date"] == datetime.now(IST).date().isoformat() else f"on {rec['date']}"
+            sent = await send_push(
+                [pid],
+                {"title": "Attendance update", "message": f"{first} was marked absent {when}.", "action_url": "/parent/attendance"},
+                idempotency_key=f"absent:{rec['student_id']}:{rec['date']}",
+            )
+        if not sent:  # release the claim so a later save can retry
+            await db.attendance.update_one({"id": rec["id"]}, {"$unset": {"absent_notified": ""}})
+    except Exception as e:
+        log.warning(f"absent push: {e}")
 
 
 @api.get("/attendance/student/{student_id}")
@@ -853,7 +886,7 @@ async def get_student_attendance(student_id: str, user: dict = Depends(get_curre
 
 @api.get("/attendance/today")
 async def attendance_today(class_name: Optional[str] = None, user: dict = Depends(require_roles("teacher", "admin", "md"))):
-    today = now_utc().strftime("%Y-%m-%d")
+    today = datetime.now(IST).strftime("%Y-%m-%d")
     q = {}
     if class_name:
         students = await db.students.find({"class_name": class_name}).to_list(500)
@@ -1110,7 +1143,7 @@ async def verify_upi_payment(payment_id: str, body: VerifyIn, user: dict = Depen
             if body.approve:
                 await send_push(
                     [pid],
-                    {"title": "✅ Payment verified", "message": f"Your payment of ₹{int(p['amount'])} has been received. Thank you!", "action_url": "/parent/fees"},
+                    {"title": "Payment received ✓", "message": f"₹{int(p['amount']):,} for {p.get('description') or 'school fees'} is confirmed. Thank you!", "action_url": "/parent/fees"},
                     idempotency_key=f"payok:{payment_id}",
                 )
             else:
@@ -1643,6 +1676,11 @@ async def create_complaint(body: ComplaintIn, user: dict = Depends(require_roles
         "resolved_at": None,
     }
     await db.complaints.insert_one(doc)
+    asyncio.create_task(send_push(
+        await staff_ids(("md",)),
+        {"title": "New complaint", "message": f"{doc['parent_name']} ({doc.get('student_name') or 'parent'}): {doc['subject'][:80]}", "action_url": "/admin/complaints"},
+        idempotency_key=f"complaint:{doc['id']}",
+    ))
     return serialize_complaint(doc)
 
 
@@ -2214,7 +2252,7 @@ async def public_deletion_request(body: PublicDeletionIn, request: Request):
         "ip": ip, "created_at": now_utc(), "resolved_at": None,
     }
     await db.deletion_requests.insert_one(doc)
-    await send_push(await staff_ids(("md",)), {"title": "New data deletion request", "message": f"{doc['parent_name']} asked to delete their data"})
+    await send_push(await staff_ids(("md",)), {"title": "New data deletion request", "message": f"{doc['parent_name']} asked to delete their data", "action_url": "/admin/deletion-requests"}, idempotency_key=f"delreq:{doc['id']}")
     return {"message": "Request received. The school will complete it within 30 days."}
 
 
@@ -2237,7 +2275,7 @@ async def create_my_deletion_request(body: InAppDeletionIn, user: dict = Depends
         "note": (body.reason or "").strip() or None, "created_at": now_utc(), "resolved_at": None,
     }
     await db.deletion_requests.insert_one(doc)
-    await send_push(await staff_ids(("md",)), {"title": "New data deletion request", "message": f"{doc['parent_name']} asked to delete their account"})
+    await send_push(await staff_ids(("md",)), {"title": "New data deletion request", "message": f"{doc['parent_name']} asked to delete their account", "action_url": "/admin/deletion-requests"}, idempotency_key=f"delreq:{doc['id']}")
     return serialize_deletion(doc)
 
 
@@ -2308,6 +2346,78 @@ async def reject_deletion(rid: str, body: RejectDeletionIn, user: dict = Depends
     return serialize_deletion(await db.deletion_requests.find_one({"id": rid}))
 
 
+# -------------------- Automatic fee due reminders --------------------
+IST = timezone(timedelta(hours=5, minutes=30))
+FEE_REMINDER_HOUR_IST = 9
+
+
+async def run_fee_due_reminders() -> dict:
+    """Send one reminder 3 days before and one on the due date for unpaid fees. Each is sent once (flagged on the payment)."""
+    today = datetime.now(IST).date()
+    sent = {"3d": 0, "due": 0}
+    window_end = datetime.combine(today + timedelta(days=4), datetime.min.time(), IST)
+    pays = await db.payments.find({
+        "status": "pending", "deleted_at": None, "due_date": {"$lt": window_end},
+        "$or": [{"reminder_3d_sent": {"$ne": True}}, {"reminder_due_sent": {"$ne": True}}],
+    }).to_list(2000)
+    for p in pays:
+        due = p.get("due_date")
+        if not due:
+            continue
+        if due.tzinfo is None:
+            due = due.replace(tzinfo=timezone.utc)
+        due_day = due.astimezone(IST).date()
+        if due_day == today + timedelta(days=3) and not p.get("reminder_3d_sent"):
+            kind, flag, title = "3d", "reminder_3d_sent", "Fee due in 3 days"
+        elif due_day == today and not p.get("reminder_due_sent"):
+            kind, flag, title = "due", "reminder_due_sent", "Fee due today"
+        else:
+            continue
+        # Claim the flag first so a reminder is never sent twice
+        claimed = await db.payments.update_one({"id": p["id"], flag: {"$ne": True}}, {"$set": {flag: True}})
+        if not claimed.modified_count:
+            continue
+        try:
+            student = await db.students.find_one({"id": p["student_id"]})
+            pid = await parent_id_for_student(student)
+            ok = False
+            if pid:
+                ok = await send_push(
+                    [pid],
+                    {"title": title, "message": f"{p.get('description') or 'School fee'} · ₹{int(p['amount']):,}", "action_url": "/parent/fees"},
+                    idempotency_key=f"feedue:{kind}:{p['id']}",
+                )
+            if ok:
+                sent[kind] += 1
+            else:  # release the claim so the next run (same day) can retry
+                await db.payments.update_one({"id": p["id"]}, {"$unset": {flag: ""}})
+        except Exception as e:
+            log.warning(f"fee due push: {e}")
+    return sent
+
+
+async def fee_reminder_loop():
+    """Once a day after 09:00 IST, run the reminders (last-run date stored in settings so restarts don't repeat it)."""
+    import asyncio
+    while True:
+        try:
+            now = datetime.now(IST)
+            today = now.date().isoformat()
+            last = await db.settings.find_one({"key": "fee_reminder_last_run"})
+            if now.hour >= FEE_REMINDER_HOUR_IST and (not last or last.get("value") != today):
+                await db.settings.update_one({"key": "fee_reminder_last_run"}, {"$set": {"value": today}}, upsert=True)
+                result = await run_fee_due_reminders()
+                log.info(f"[FEE REMINDERS] {today}: {result}")
+        except Exception as e:
+            log.warning(f"fee reminder loop: {e}")
+        await asyncio.sleep(1800)
+
+
+@api.post("/payments/run-due-reminders")
+async def trigger_fee_due_reminders(user: dict = Depends(require_roles("md"))):
+    return await run_fee_due_reminders()
+
+
 app.include_router(api)
 
 app.add_middleware(
@@ -2324,6 +2434,8 @@ async def on_startup():
     await seed()
     await seed_schedules()
     await seed_extras()
+    import asyncio
+    asyncio.create_task(fee_reminder_loop())
 
 
 @app.on_event("shutdown")

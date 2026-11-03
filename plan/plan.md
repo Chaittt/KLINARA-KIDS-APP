@@ -1,109 +1,91 @@
-# Klinara Kids: Compliance and Store Assets (Phase 3)
+# Klinara Kids: Push Notifications with Firebase (google-services.json)
 
-These are the legal pages, data deletion process, children's-data safeguards and store listing material needed to publish Klinara Kids on Google Play and the Apple App Store.
-The work covers a public privacy policy, a public "delete my data" page, in-app deletion and consent, a DPDP Act review, and ready-to-upload screenshots, descriptions and a feature graphic.
+This turns on real phone notifications for Klinara Kids. Android uses the Firebase `google-services.json` file, and iPhone uses an Apple key added at build time.
+Parents, teachers and the MD get instant alerts for the school events that matter, and tapping one opens the right screen in the app.
 
 ## Who it's for
-- **School owner / MD:** submits the app to both stores without being rejected for missing policies, and handles deletion requests from one place.
-- **Parents:** can see clearly what data is collected about their child, give consent, and ask for deletion at any time.
-- **Store reviewers (Google and Apple):** need working public links and an in-app deletion option before approving the app.
+- **Parents:** hear about announcements, new class photos, fee dues, payment confirmation and absences without opening the app.
+- **MD:** gets alerted right away to new complaints and data deletion requests.
+- **Admin / MD:** keep getting the alert when a parent submits a UPI payment for verification (already in place).
 
 ## Findings that shape this plan
-- **The website has no privacy or deletion page yet.** https://www.klinarakids.com/ has Home, Programs, Admissions and Contact pages, but nothing for privacy or data deletion.
-- **The website's inner pages don't open from a direct link.** Opening a page like `klinarakids.com/contact` directly returns "Not Found", even though it works when clicked from the home page. Store reviewers open policy links directly, so a privacy page added there would look broken to them until the site's hosting is fixed.
-- **What the stores require:**
-  - Google Play requires a public privacy policy link and a public web page where users can request deletion of their account and data. It must not be a PDF, and the app must also offer deletion inside the app.
-  - Apple requires that users can start account deletion inside the app.
-  - Turning an account off is not enough for either store.
-- **DPDP Act:** the DPDP Rules were notified on 13 Nov 2025. The children's data rules (verifiable parental consent) take effect around **13 May 2027**. Schools and childcare centres are exempt from the parental-consent and tracking limits only when the data is used for education or child safety. Klinara's Elthea AI assessment is a US-based behaviour assessment, so it isn't clearly covered by that exemption and is treated as needing separate parent consent.
+- **Most of the notification code already exists:**
+  - The app asks for permission after login.
+  - It registers each phone with Emergent's managed push service.
+  - It opens the right screen when a notification is tapped, even if the app was closed.
+  - The server already sends some alerts.
+- **The Firebase file is missing:** the app's Android settings point to `google-services.json`, but the file isn't in the project. Without it, notifications can't be delivered on Android and the Android build would fail. Adding it is the main step.
+- **The Android app ID will change:** it is currently `com.emergent.nurserydash.qnzmux`, while the iPhone app uses `com.klinarakids.app`. As agreed, Android switches to **`com.klinarakids.app`**, and the Firebase file must be created for that exact ID.
+- **Testing needs a real build:** notifications don't work in Expo Go or the web preview. They can only be tested after Publish → Deploy → Generate the Android and iOS builds.
 
-## What the "data deletion request" means
-App stores require that a parent can ask the school to permanently erase their account and their child's data from the app: profile, photos, attendance, Elthea results and fee history. They must be able to ask from inside the app or from a public web page. The plan uses the recommended approach: the request goes to the MD, who confirms it, and the data is erased within 30 days. Fee and payment records the school must keep by law are kept, with the reason stated.
+## Getting the google-services.json file (step by step)
+1. Open **https://console.firebase.google.com** and sign in with the school's Google account.
+2. Tap **Create a project** (or **Add project**), name it **Klinara Kids**, and finish the setup. Google Analytics can be turned off.
+3. On the project page, tap the **Android** icon to add an Android app.
+4. Enter the package name exactly: **`com.klinarakids.app`**. The nickname can be "Klinara Kids Android". The SHA-1 key can be left empty.
+5. Tap **Register app**, then **Download google-services.json**.
+6. Skip the remaining Firebase steps ("Add Firebase SDK" and so on). They aren't needed.
+7. Attach the downloaded file in this chat.
+
+**Later, when generating builds, the Publish screen will ask for two more items. It shows step-by-step guides for both.**
+- A **Google service account JSON** for sending to Android. This is a different file from `google-services.json`.
+- An **Apple APNs key (.p8)** for iPhone notifications.
 
 ## Core features and experience
-1. **Public privacy policy page**
-   - It is hosted at a permanent public link on the app's server, for example `<your Render server>/privacy`. It opens directly and works on any phone or computer.
-   - It's written for Klinara Kids, Hyderabad, and covers:
-     - What is collected: parent name, phone and username; the child's name, age, class and photos; attendance, activities, fees and Elthea results.
-     - Why it's collected, who can see it (staff by role), the Elthea AI third party, how long it's kept, parent rights and the deletion process.
-     - Contact for privacy questions: Road No. 10, AGRL Housing Colony, Hastinapuram, Hyderabad 500079 · 7673920886 · admissions@klinarakids.com.
-   - The same text is provided in a form that can be pasted onto klinarakids.com later, once that site's direct links work.
-2. **Public "Delete my data" page**
-   - It is at a permanent public link, for example `<your Render server>/delete-account`, and names "Klinara Kids" as listed in the stores.
-   - A simple form asks for parent name, username, phone and child's name, plus a "Submit request" button. The email admissions@klinarakids.com is shown as an alternative.
-   - It explains what gets deleted, what is kept and why, and that requests are completed within 30 days.
-3. **In-app deletion (required by both stores)**
-   - **Parent side:** Parent Profile gets a **"Delete my account"** button. It shows a short explanation and a confirmation, then sends the request.
-   - **MD side:** a new **Deletion Requests** list is added to User & Login Management. Each request shows who asked and when, with two actions: **Delete data** (permanently erases that parent and their children's app data) and **Reject** (with a reason).
-   - **Updates:** the parent sees "Request received" and the status while it's pending.
-4. **Parent consent and privacy notice in the app**
-   - On a parent's first login, a one-screen privacy notice summarises what is collected and links to the full policy. Tapping "I agree" records the date and time.
-   - There is a separate opt-in switch for the **Elthea AI assessment**, which is off until the parent turns it on. Until then, the parent sees no "Start Assessment" button.
-   - Both are shown again from Parent Profile, so consent can be withdrawn there.
-5. **DPDP Act review document**
-   - This is a plain-language checklist of what the Act and the 2025 Rules expect for children's data, and where Klinara Kids stands on each item, marked done / built now / to do before May 2027.
-   - It covers:
-     - Notice and consent
-     - Verifiable parental consent and how the school exemption applies
-     - Limits on tracking children
-     - Elthea as a third party, including transfer outside India
-     - Data security
-     - Breach reporting within 72 hours
-     - Retention and erasure
-     - The grievance contact
-   - It is guidance only, not legal advice, and is marked for review by a lawyer.
-6. **Store listing pack**
-   - **Screenshots:** 6 screens with sample data, framed on a branded cream and teal background with a one-line headline each.
-     - **The six screens:** Parent home, Activity feed, Attendance, Fees and UPI payment, Elthea GROW profile, and Teacher attendance marking.
-     - **Sizes:** Google Play phone (1080×1920) and Apple iPhone 6.9" (1320×2868).
-   - **Feature graphic (Google Play):** 1024×500 with the Klinara logo, "Raising Little Stars" and a phone preview.
-   - **Text:**
-     - **Google Play:** a short description (max 80 characters) and a full description (max 4000).
-     - **Apple:** a subtitle (max 30 characters), promotional text (max 170), a description (max 4000) and keywords (max 100).
-     - **Both:** a list of data-safety and privacy answers, ready to copy into the Play Console and Apple's privacy questionnaire.
-   - All files are delivered together in one downloadable folder.
+1. **Firebase connected for Android:** the file is added, the Android app ID becomes `com.klinarakids.app`, and the Android build is ready for notifications. iPhone needs no extra file now.
+2. **Notifications that already work stay as they are:**
+   - New announcement → all parents → opens Announcements
+   - New activity photo/post for a child → that child's parent → opens the Feed
+   - Fee reminder sent by Admin/MD → that parent → opens Fees
+   - Payment verified or rejected → that parent → opens Fees
+   - Parent submitted a UPI payment → Admin and MD → opens Payment Verifications
+   - New data deletion request → MD
+3. **New notifications:**
+   - **Automatic fee due reminders:** the parent gets one alert **3 days before** a fee is due and one **on the due date**, for unpaid fees only. These come in addition to the existing manual "Send Fee Reminder" button. Each reminder goes out once, never repeated.
+   - **Payment confirmed:** a clear "Payment received ✓" alert with the amount when the Admin verifies a payment. This improves the wording of the existing alert.
+   - **Child marked absent:** when a teacher saves a child as Absent, the parent gets an alert like "Aarav was marked absent today". It goes out at most once per child per day. "Present" and "Late" don't send an alert.
+   - **New complaint → MD:** when a parent submits a complaint, the MD is alerted and taps through to Complaints.
+   - **New deletion request → MD:** taps open the Deletion Requests list. The alert already exists; it gains the tap link.
+4. **Tapping any notification** opens the matching screen for that person's role. If the app was closed, it opens to that screen.
+5. **Permission handling:** this stays as it is today. The app asks for permission after login. If the parent says no, the app still works fully, and a gentle weekly reminder offers to open phone Settings.
 
 ## User flow
-- **Store reviewer:** opens the privacy link → reads the policy; opens the delete link → sees the request form; logs in with the demo parent → finds "Delete my account" in Profile.
-- **Parent (first login):** logs in → reads the privacy notice → taps "I agree" → optionally turns on Elthea → lands on the home screen.
-- **Parent (deletion):** Profile → Delete my account → confirms → sees "Request received". The MD reviews it → Delete data → the parent's login stops working and their data is erased.
-- **Parent (web):** opens the delete page → fills in the form → the request appears in the MD's Deletion Requests list.
-- **MD:** User & Login Management → Deletion Requests → reviews each one → Delete data or Reject.
+- **School owner (once):** creates the Firebase file using the steps above → attaches it in chat → Publish → Deploy → Generate builds → uploads the Google service account JSON and the Apple .p8 key when asked → installs the build on a phone.
+- **Parent:** installs the app → logs in → allows notifications → gets alerts and taps one to see the details.
+- **Teacher:** marks attendance as usual. Absent children's parents are alerted automatically.
+- **MD:** gets an alert for each new complaint or deletion request → taps it → handles it in the app.
 
 ## UI/UX feel
-- **Public pages:** clean and readable, in the app's cream background and teal headings with the Klinara logo, readable on a phone, with no login needed.
-- **In-app screens:** reuse the existing card and button style. "Delete my account" is shown in a calm red with clear wording.
-- **Screenshots and feature graphic:** warm, friendly and uncluttered, with a short benefit headline above each phone screen.
+- **Short and friendly messages:** the title names the event, the body gives the detail, for example "Fee due in 3 days · Term 2 of 3 · ₹10,000". There is no sound or design customisation beyond the standard phone notification.
+- **App icon:** notifications use the Klinara teal accent color already set in the app.
 
 ## Implementation phases
 ### Phase 1 (MVP, built now)
-- Public privacy policy page and public "Delete my data" page with request form, hosted on the app's server
-- In-app "Delete my account" for parents, and a Deletion Requests list for the MD with permanent delete
-- First-login privacy notice with recorded consent, and an Elthea opt-in switch
-- DPDP Act review checklist document
-- 6 framed screenshots in Play and Apple sizes, the 1024×500 feature graphic, all store descriptions and the data-safety answers
+- Add the user-supplied `google-services.json` and switch the Android app ID to `com.klinarakids.app`
+- Automatic fee due reminders (3 days before and on the due date)
+- Child-absent alerts to the parent, at most once a day
+- New complaint alerts to the MD
+- Clearer "payment received" wording, and tap links on all alerts, including deletion requests
+- Keep all existing alerts and permission handling unchanged
 
 ### Phase 2 (later)
-- Move the policy pages onto klinarakids.com once its direct links work
-- Email to the MD when a new deletion request arrives, and email to the parent when it's done
-- Consent history export for the MD
-- Tablet screenshots, if tablet listing is wanted
+- Notification settings in Profile, so a parent can turn alert types on or off (for example, no absence alerts)
+- Homework posted → parents of that class
+- Reminders for events this week, the day before each event
 
-### Phase 3 (later, before May 2027)
-- Stronger parental identity check if the exemption doesn't fully cover the school's use
-- Breach-reporting procedure and data-retention auto-cleanup
-- A short app preview video for both stores
-- Privacy policy translations (Telugu and Hindi)
+### Phase 3 (later)
+- A different notification sound for urgent alerts (absence, fee due today)
+- An in-app notification history screen
+- Telugu and Hindi notification text
 
 ## Assumptions
-- **Hosting:** the policy and deletion pages are hosted on the app's own server, not on klinarakids.com, because that site's inner pages fail when opened directly. The text is also provided to paste onto the website later.
-- **Deletion handling:** the MD reviews requests and completes them within 30 days. Fee and payment records are kept for legal and accounting reasons and are stated as such.
-- **Who can ask for deletion:** only parents can request deletion. Staff accounts are removed by the MD as today.
-- **Policy details:** the privacy contact is admissions@klinarakids.com and 7673920886, and the school's legal name in the policy is "Klinara Kids Pre-School, Hyderabad". The policy dates and version are shown on the page.
-- **Grievance contact:** the MD acts as the grievance contact. No separate Data Protection Officer is named.
-- **Elthea:** it's treated as a third-party service that needs the parent's separate opt-in. Existing Elthea results stay visible but no new assessment starts without the opt-in.
-- **Existing parents:** they see the privacy notice on their next login.
-- **Apps without ads:** the app has no ads and no tracking tools. Store answers will state this.
-- **Store targeting:** the store listings target parents (adults), not children. The app is marked "Education" and isn't entered into Google Play's "Designed for Families" / Kids category, because children don't use the app themselves.
-- **Screenshot sample data:** screenshots use the demo sample data, with sample child names and stock-style placeholders, not real children's photos.
-- **DPDP review:** the review is informational and should be checked by a lawyer before relying on it.
+- **Android ID change:** the app isn't on Google Play yet under the old ID, so changing it to `com.klinarakids.app` is safe. Once the app is published, this ID can never change.
+- **One Firebase project:** a single project named "Klinara Kids", owned by the school's Google account.
+- **Push service:** notifications are sent through Emergent's managed push service. No other provider is used, and sending is billed to your Emergent credits.
+- **Who gets each alert:**
+  - Fee due reminders go only to the parent of the child whose fee is unpaid.
+  - Complaint and deletion alerts go to the MD only, not to Admin.
+  - Absence alerts are sent only when attendance is saved as Absent. Changing a mark later doesn't send a correction alert.
+- **Reminder timing:** automatic reminders run once a day in the morning (India time).
+- **Testing:** notifications can't be tested in Expo Go or the web preview. They only work after publishing and installing a generated build on a real phone.
+- **Telling parents:** existing parents will be asked for notification permission the next time they open the new build.

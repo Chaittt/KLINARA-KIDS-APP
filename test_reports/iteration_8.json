@@ -1,0 +1,31 @@
+{
+  "summary": "Backend only: tested the push alert features. 14/14 pytest tests passed. The absent alert flag dedupes (re-saving absent, or present then absent, keeps absent_notified=true and there is still only one record; present and late don't set the flag; the endpoint returns 200 while the relay returns 401). Parent complaints return 200 and persist, and the MD push fails silently. run-due-reminders is MD only (admin, teacher and parent get 403; a request with no token gets 401/403). It returns {'3d','due'}: a payment due on today+3 IST (01:00 IST, to check the IST conversion) counts once, then 0; a payment due today IST counts once, then 0; due dates 1, 2, -1 and 4 days away are ignored; paid, pending_verification and soft-deleted payments are ignored and not flagged. Regressions pass: verify approve sets status to paid, and the public deletion request returns 200. Config is correct: android.package and the google-services package_name are both com.klinarakids.app, googleServicesFile is set, and the expo-notifications plugin is present. Real delivery is MOCKED: the relay returns 401 with the placeholder key, as the backend.err.log warnings show.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "run_fee_due_reminders / notify_absent", "issue": "The flag (reminder_3d_sent, reminder_due_sent or absent_notified) is set and the count goes up even when the push fails: send_push swallows the 401 or any network error. If the relay has a transient error, that reminder is lost for good. The count shows reminders attempted, not delivered. In preview, any real fee whose due date reaches the window gets flagged even though nothing is sent."},
+      {"endpoint": "POST /api/attendance, /api/complaints", "issue": "send_push is awaited inside the request (10s httpx timeout), so a slow relay adds up to 10s to each absent mark or complaint. Consider asyncio.create_task or a background task."},
+      {"endpoint": "notify_absent", "issue": "The message says 'was marked absent today (<date>)' even when a teacher marks a past date."},
+      {"endpoint": "GET /api/attendance/today", "issue": "This existing endpoint uses the UTC date, not IST, so 'today' is the previous day between 00:00 and 05:30 IST. Reminders use IST, so the two are inconsistent."},
+      {"endpoint": "payments collection", "issue": "There are about 9 orphan 'pending' payments whose student_ids no longer exist. Reminders will claim flags on them with no recipient. This is data hygiene only."},
+      {"endpoint": "config", "issue": "PUSH_KEY = os.environ.get('EMERGENT_PUSH_KEY', 'placeholder') has a default value, which goes against the no-defaults env rule."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": [], "react_native_issues": []},
+  "test_report_links": ["/app/backend/tests/test_iteration8_push_alerts.py", "/app/test_reports/pytest/pytest_iteration8.xml"],
+  "action_items": [
+    "Optional: send pushes in the background (asyncio.create_task) so the relay's latency doesn't block the attendance and complaint APIs.",
+    "Optional: only set the reminder flags after the relay returns 2xx, or log the failure for a retry, so reminders aren't lost on transient relay errors.",
+    "Optional: change the absent message to 'on <date>' instead of 'today', and use the IST date in /attendance/today."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 2435 lines and should be split into routers (attendance, payments, push, deletion).",
+    "fee_reminder_loop writes last_run before it runs, so a crash mid-run skips that day. This is acceptable, given the per-payment flags."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration8_push_alerts.py"],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "not tested (backend only)"},
+  "seed_data_creation": "No permanent data. The tests temporarily set due_date on Aarav's pending payment a9d435cd and restored it afterwards (due_date and the reminder flags unset; verified). The TEST_ payments, the attendance records for 2020-02-29 and 2020-03-01, the TEST_ complaints and the TEST_Parent deletion requests were all deleted. anjali.reddy is untouched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run with EXPO_PUBLIC_BACKEND_URL set. The tests use pymongo with MONGO_URL/DB_NAME from backend/.env to set due dates in IST. Aarav (student 11348978...) is the only student; its pending payment is a9d435cd. The public deletion endpoint is rate limited to 5 requests per IP per hour (the test accepts a 429)."
+}

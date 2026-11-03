@@ -202,3 +202,33 @@ Backend enforces RBAC on every protected route; token role is the source of trut
   - Elthea data processing agreement
   - App preview video
   - Telugu/Hindi policy
+
+---
+
+## Push Notifications with Firebase (2026-11, iteration 8)
+
+### Implemented
+- `frontend/google-services.json` added (Firebase project `klinara-kids`). The Android package changed to `com.klinarakids.app`, which now matches iOS. `EMERGENT_PUSH_KEY=placeholder` is in backend/.env; the real key is injected at deploy.
+- Existing alerts are kept: announcement, activity, manual fee reminder, payment submitted (admin/MD), payment rejected.
+- New alerts:
+  - Absent alert to the parent (`notify_absent`, at most once per child per day via the `absent_notified` flag)
+  - New complaint to the MD (→ /admin/complaints)
+  - "Payment received ✓" wording with the amount
+  - Tap links on deletion-request alerts (→ /admin/deletion-requests)
+- Automatic fee due reminders (`run_fee_due_reminders`):
+  - Sent 3 days before and on the due date (IST), for `pending` fees only
+  - Sent once, via the `reminder_3d_sent`/`reminder_due_sent` flags
+  - A background loop runs daily after 09:00 IST, with the last-run date in `settings`
+  - MD manual trigger: `POST /api/payments/run-due-reminders`
+- Verified via API: the absent dedupe, and the 3-day reminder sending once only.
+- Push delivery can only be tested on a real build (Publish → Deploy → Generate builds). Preview gets 401 from the push relay with the placeholder key, which is expected.
+
+### Backlog
+- Phase 2: per-type notification settings in Profile; homework alerts; event-eve reminders.
+- Phase 3: urgent-alert sound; in-app notification history; Telugu/Hindi text.
+- Iteration 8 follow-ups:
+  - `send_push` now returns True/False. On a failed send, the absent and fee-reminder flags are released so the alert can retry.
+  - Absent and complaint pushes run in the background, so they no longer slow down saving.
+  - Absent wording says "today" or "on <date>".
+  - `/attendance/today` uses the IST date.
+  - Tests: `test_iteration8_push_alerts.py` updated for preview (relay 401 → claim released); 25 passed.
