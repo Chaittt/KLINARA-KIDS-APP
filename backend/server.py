@@ -17,7 +17,7 @@ from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, status
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
-from push_fcm import send_push as fcm_send_push, save_token as fcm_save_token
+from push_fcm import send_push as fcm_send_push, save_token as fcm_save_token, _get_app as fcm_init
 import re
 
 
