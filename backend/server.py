@@ -10,7 +10,6 @@ import logging
 import bcrypt
 import jwt
 import secrets
-import httpx
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Literal
 
@@ -18,6 +17,7 @@ from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, status
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr
+from push_fcm import send_push as fcm_send_push, save_token as fcm_save_token
 import re
 
 
@@ -138,37 +138,17 @@ def require_roles(*roles: str):
     return dep
 
 
-# -------------------- Push Notifications (Emergent managed) --------------------
-PUSH_BASE_URL = "https://integrations.emergentagent.com"
-PUSH_KEY = os.environ.get("EMERGENT_PUSH_KEY", "placeholder")
-
-_push_client = httpx.AsyncClient(
-    base_url=PUSH_BASE_URL,
-    headers={"X-Push-Key": PUSH_KEY},
-    timeout=10.0,
-)
-
-
+# -------------------- Push Notifications (Firebase Cloud Messaging) --------------------
 async def send_push(recipients: List[str], data: dict, idempotency_key: Optional[str] = None) -> bool:
-    """Relay a push to the Emergent managed push service. Non-blocking: never raises. Returns True if every chunk was accepted."""
-    recipients = [r for r in (recipients or []) if r]
-    if not recipients:
+    """Send a push through Firebase (see push_fcm.py). Non-blocking: never raises.
+    Returns True if at least one device was reached, so callers can release their
+    "already notified" flags and retry later when nothing was delivered.
+    idempotency_key is accepted for compatibility with existing callers and is not used."""
+    try:
+        return bool(await fcm_send_push(db, recipients, data))
+    except Exception as e:
+        log.warning(f"Push send failed (non-blocking): {e}")
         return False
-    if "title" not in data or "message" not in data:
-        return False
-    ok = True
-    for i in range(0, len(recipients), 100):
-        chunk = recipients[i:i + 100]
-        payload: dict = {"recipients": chunk, "data": data}
-        if idempotency_key:
-            payload["$idempotency_key"] = f"{idempotency_key}:{i}"
-        try:
-            resp = await _push_client.post("/api/v1/push/trigger", json=payload)
-            resp.raise_for_status()
-        except Exception as e:
-            ok = False
-            log.warning(f"Push send failed (non-blocking): {e}")
-    return ok
 
 
 async def parent_ids_all() -> List[str]:
@@ -395,11 +375,9 @@ async def register_push(body: RegisterPushIn, user: dict = Depends(get_current_u
     if body.user_id != user["id"]:
         raise HTTPException(status_code=403, detail="Cannot register a device for another user")
     try:
-        resp = await _push_client.post("/api/v1/push/users/register", json=body.dict())
-        resp.raise_for_status()
+        await fcm_save_token(db, user["id"], body.platform, body.device_token)
     except Exception as e:
-        # Non-blocking in preview (placeholder key). Real key is injected at deploy.
-        log.warning(f"register-push relay failed (non-blocking): {e}")
+        log.warning(f"register-push failed (non-blocking): {e}")
         return {"status": "skipped"}
     return {"status": "registered"}
 
@@ -1873,6 +1851,8 @@ async def seed():
         await db.users.create_index("username", unique=True, sparse=True)
         await db.students.create_index("id", unique=True)
         await db.password_reset_tokens.create_index("expires_at", expireAfterSeconds=0)
+        await db.push_tokens.create_index("device_token", unique=True)
+        await db.push_tokens.create_index("user_id")
     except Exception as e:
         log.warning(f"Index creation: {e}")
 

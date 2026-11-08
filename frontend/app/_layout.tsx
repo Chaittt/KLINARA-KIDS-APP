@@ -73,10 +73,27 @@ function PushManager() {
           method: 'POST',
           body: { user_id: user.id, platform: Platform.OS, device_token: String(tokenResp.data) },
         });
-      } catch {
+      } catch (e) {
         // Expo Go / simulator / no native FCM-APNs — push works only in a real build
+        console.warn('push register failed', e);
       }
     })();
+  }, [user]);
+
+  // Re-register if FCM rotates this device's token
+  useEffect(() => {
+    if (Platform.OS === 'web' || !user) return;
+    const sub = Notifications.addPushTokenListener(async (t) => {
+      try {
+        await api('/register-push', {
+          method: 'POST',
+          body: { user_id: user.id, platform: Platform.OS, device_token: String(t.data) },
+        });
+      } catch (e) {
+        console.warn('push token refresh register failed', e);
+      }
+    });
+    return () => sub.remove();
   }, [user]);
 
   // Handle notification taps → open the relevant existing screen
@@ -88,11 +105,17 @@ function PushManager() {
       if (String(url).startsWith('http')) Linking.openURL(String(url));
       else router.push(String(url) as any);
     };
+    // FCM may deliver the payload in content.data or in trigger.remoteMessage.data
+    const payloadOf = (r: Notifications.NotificationResponse) => {
+      const content: any = r.notification.request.content.data || {};
+      if (content.action_url || content.deeplink) return content;
+      return (r.notification.request.trigger as any)?.remoteMessage?.data || content;
+    };
     const sub = Notifications.addNotificationResponseReceivedListener((r) =>
-      route(r.notification.request.content.data || {})
+      route(payloadOf(r))
     );
     Notifications.getLastNotificationResponseAsync().then((r) => {
-      if (r) route(r.notification.request.content.data || {});
+      if (r) route(payloadOf(r));
     });
     return () => {
       sub.remove();
