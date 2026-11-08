@@ -2411,6 +2411,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def on_startup():
+    fcm_init()  # logs whether Firebase push is configured, at startup
     await seed()
     await seed_schedules()
     await seed_extras()
