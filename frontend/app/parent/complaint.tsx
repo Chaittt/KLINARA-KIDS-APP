@@ -24,7 +24,10 @@ export default function ParentComplaint() {
     const r = await Promise.allSettled([api<Student[]>('/students'), api<Complaint[]>('/complaints')]);
     if (r[0].status === 'fulfilled') {
       setStudents(r[0].value);
-      if (r[0].value[0]) setSelId((prev) => prev ?? r[0].value[0].id);
+      if (r[0].status === 'fulfilled' && r[0].value[0]) {
+      const firstId = r[0].value[0].id;
+      setSelId((prev) => prev ?? firstId);
+      } 
     }
     if (r[1].status === 'fulfilled') setPast(r[1].value);
   }, []);

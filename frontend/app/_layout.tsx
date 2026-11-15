@@ -149,8 +149,8 @@ function RouteGuard() {
     } else if (inApp) {
       // role mismatch protection
       if (user.role === 'parent' && seg0 !== 'parent') router.replace('/parent/home');
-      if (user.role === 'teacher' && seg0 !== 'teacher' && seg0 !== 'student') router.replace('/teacher/students');
-      if ((user.role === 'admin' || user.role === 'md') && seg0 !== 'admin' && seg0 !== 'student') router.replace('/admin');
+      if (user.role === 'teacher' && seg0 !== 'teacher' && (seg0 as string) !== 'student') router.replace('/teacher/students');
+      if ((user.role === 'admin' || user.role === 'md') && seg0 !== 'admin' && (seg0 as string) !== 'student') router.replace('/admin');
     }
   }, [user, loading, segments]);
 

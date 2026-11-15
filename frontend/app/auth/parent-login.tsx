@@ -102,7 +102,7 @@ export default function ParentLogin() {
           <TouchableOpacity
             testID="parent-forgot-btn"
             style={{ marginTop: spacing.md, alignItems: 'center', paddingVertical: 8 }}
-            onPress={() => router.push('/auth/parent-forgot')}
+            onPress={() => router.push('/auth/parent-forgot' as any)}
           >
             <Text style={styles.link}>Forgot password?</Text>
           </TouchableOpacity>

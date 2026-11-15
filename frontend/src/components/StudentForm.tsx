@@ -17,6 +17,12 @@ import { colors, radii, spacing } from '../theme';
 
 export type PlanType = 'single' | 'term';
 
+type TeacherOption = {
+  id: string;
+  name: string;
+  class_name?: string | null;
+};
+
 /** Username + password fields used by Add Student and Set Login. */
 export function LoginFields({
   username,
@@ -204,6 +210,8 @@ export function AddStudentModal({
   const [parentName, setParentName] = useState('');
   const [parentPhone, setParentPhone] = useState('');
   const [age, setAge] = useState('');
+  const [teachers, setTeachers] = useState<TeacherOption[]>([]);
+  const [teacherId, setTeacherId] = useState<string>('');
   const [pUsername, setPUsername] = useState('');
   const [pPassword, setPPassword] = useState('');
   const [existingLogin, setExistingLogin] = useState<string | null>(null);
@@ -211,6 +219,14 @@ export function AddStudentModal({
   const [planType, setPlanType] = useState<PlanType>('single');
   const [terms, setTerms] = useState<[string, string, string]>(['', '', '']);
   const [saving, setSaving] = useState(false);
+
+  // Load available teachers whenever the modal opens
+  useEffect(() => {
+    if (!visible) return;
+    api<TeacherOption[]>('/teachers')
+      .then(setTeachers)
+      .catch(() => setTeachers([]));
+  }, [visible]);
 
   // When a full phone is entered, check whether this parent already has a login (sibling)
   useEffect(() => {
@@ -233,6 +249,7 @@ export function AddStudentModal({
     setParentName('');
     setParentPhone('');
     setAge('');
+    setTeacherId('');
     setPUsername('');
     setPPassword('');
     setExistingLogin(null);
@@ -268,6 +285,7 @@ export function AddStudentModal({
           parent_name: parentName.trim(),
           parent_phone: parentPhone.trim(),
           age: age ? parseInt(age, 10) : null,
+          teacher_id: teacherId || null,
           total_fees: total,
           plan_type: planType,
           term_amounts: planType === 'term' ? terms.map((t) => parseInt(t, 10)) : null,
@@ -294,6 +312,40 @@ export function AddStudentModal({
             <Input testID="add-name" label="Student Full Name" value={name} onChangeText={setName} placeholder="e.g. Aarav Reddy" containerStyle={{ marginTop: spacing.md }} />
             <Input testID="add-class" label="Class" value={klass} onChangeText={setKlass} placeholder="e.g. Sunshine" />
             <Input testID="add-age" label="Age (optional)" value={age} onChangeText={(t) => setAge(t.replace(/\D/g, '').slice(0, 2))} keyboardType="number-pad" />
+
+            <Text style={styles.fieldLabel}>Assign Teacher</Text>
+            {teachers.length === 0 ? (
+              <Muted style={{ fontSize: 12, marginBottom: spacing.sm }}>
+                No teachers added yet. Add a teacher in Setup to assign.
+              </Muted>
+            ) : (
+              <View style={styles.teacherChipWrap} testID="add-teacher-list">
+                {teachers.map((t) => {
+                  const active = teacherId === t.id;
+                  return (
+                    <TouchableOpacity
+                      key={t.id}
+                      testID={`add-teacher-${t.id}`}
+                      onPress={() => setTeacherId(active ? '' : t.id)}
+                      style={[
+                        styles.teacherChip,
+                        active && { backgroundColor: colors.primary, borderColor: colors.primary },
+                      ]}
+                    >
+                      <Ionicons
+                        name={active ? 'checkmark-circle' : 'person-outline'}
+                        size={15}
+                        color={active ? colors.inverse : colors.textSecondary}
+                      />
+                      <Text style={[styles.teacherChipText, active && { color: colors.inverse }]}>
+                        {t.name}{t.class_name ? ` (${t.class_name})` : ''}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+
             <Input testID="add-parent-name" label="Parent Name" value={parentName} onChangeText={setParentName} placeholder="e.g. Anjali Reddy" />
             <Input
               testID="add-phone"
@@ -344,6 +396,20 @@ const styles = StyleSheet.create({
   modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   divider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.md },
   sectionTitle: { fontSize: 14, fontWeight: '700', color: colors.text, marginBottom: spacing.sm },
+  fieldLabel: { fontSize: 13, fontWeight: '600', color: colors.textSecondary, marginTop: 4, marginBottom: 8 },
+  teacherChipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: spacing.md },
+  teacherChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radii.pill,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  teacherChipText: { fontSize: 13, fontWeight: '600', color: colors.text },
   eye: { position: 'absolute', right: 4, top: 26, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   existingBox: {
     flexDirection: 'row',

@@ -8,10 +8,10 @@ import {
   TouchableOpacity,
   View,
   ViewStyle,
-  TextStyle,
+  TextStyle, 
+  StyleProp,
 } from 'react-native';
 import { colors, fonts, radii, shadow, spacing } from './theme';
-
 export function Button({
   title,
   onPress,
@@ -81,8 +81,7 @@ export function Input({
     </View>
   );
 }
-
-export function Card({ children, style, testID }: { children: React.ReactNode; style?: ViewStyle; testID?: string }) {
+export function Card({ children, style, testID }: { children: React.ReactNode; style?: StyleProp<ViewStyle>; testID?: string }) {
   return (
     <View testID={testID} style={[styles.card, style]}>
       {children}

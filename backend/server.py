@@ -206,6 +206,7 @@ class StudentIn(BaseModel):
     parent_name: str
     age: Optional[int] = None
     photo: Optional[str] = None  # base64
+    teacher_id: Optional[str] = None
     total_fees: int
     plan_type: Literal["single", "term"]
     term_amounts: Optional[List[int]] = None
@@ -225,6 +226,7 @@ class StudentUpdate(BaseModel):
     parent_phone: Optional[str] = None
     age: Optional[int] = None
     photo: Optional[str] = None
+    teacher_id: Optional[str] = None
 
 
 class TeacherIn(BaseModel):
@@ -497,6 +499,8 @@ def serialize_student(s: dict) -> dict:
         "class_name": s.get("class_name"),
         "parent_phone": s.get("parent_phone"),
         "parent_id": s.get("parent_id"),
+        "teacher_id": s.get("teacher_id"),
+        "teacher_name": s.get("teacher_name"),
         "age": s.get("age"),
         "photo": s.get("photo"),
         "elthea_grow": s.get("elthea_grow"),
@@ -516,7 +520,15 @@ async def list_students(user: dict = Depends(get_current_user)):
     elif user["role"] == "teacher":
         teacher = await db.users.find_one({"id": user["id"]})
         cls = teacher.get("class_name") if teacher else None
-        q = {"class_name": cls} if cls else {}
+        if cls:
+            q = {
+                "$or": [
+                    {"teacher_id": user["id"]},
+                    {"teacher_id": {"$in": [None, ""]}, "class_name": cls},
+                ]
+            }
+        else:
+            q = {"teacher_id": user["id"]}
         students = await db.students.find(q).to_list(500)
     else:  # admin / md
         students = await db.students.find().to_list(1000)
@@ -603,6 +615,14 @@ async def create_student(body: StudentIn, user: dict = Depends(require_roles("ad
     if not re.fullmatch(r"\d{10}", body.parent_phone):
         raise HTTPException(status_code=400, detail="Parent phone must be 10 digits")
 
+    teacher_id = (body.teacher_id or "").strip() or None
+    teacher_name = None
+    if teacher_id:
+        teacher = await db.users.find_one({"id": teacher_id, "role": "teacher"})
+        if not teacher:
+            raise HTTPException(status_code=404, detail="Assigned teacher not found")
+        teacher_name = teacher.get("name")
+
     parent = await db.users.find_one({"phone": body.parent_phone, "role": "parent"})
     creds: dict = {}
     if not (parent and parent.get("username")):
@@ -637,6 +657,8 @@ async def create_student(body: StudentIn, user: dict = Depends(require_roles("ad
         "class_name": body.class_name,
         "parent_phone": body.parent_phone,
         "parent_id": parent_id,
+        "teacher_id": teacher_id,
+        "teacher_name": teacher_name,
         "age": body.age,
         "photo": body.photo,
         "total_fees": body.total_fees,
@@ -680,11 +702,11 @@ async def set_fee_plan(student_id: str, body: FeePlanIn, user: dict = Depends(re
 
 @api.put("/students/{student_id}")
 async def update_student(student_id: str, body: StudentUpdate, user: dict = Depends(require_roles("md"))):
-    update = {k: v for k, v in body.dict().items() if v is not None}
+    update = body.dict(exclude_unset=True)
     if not update:
         raise HTTPException(status_code=400, detail="Nothing to update")
 
-    if "parent_phone" in update:
+    if "parent_phone" in update and update["parent_phone"]:
         parent = await db.users.find_one({"phone": update["parent_phone"], "role": "parent"})
         if not parent:
             parent_id = str(uuid.uuid4())
@@ -700,6 +722,18 @@ async def update_student(student_id: str, body: StudentUpdate, user: dict = Depe
         else:
             parent_id = parent["id"]
         update["parent_id"] = parent_id
+
+    if "teacher_id" in update:
+        tid = (update["teacher_id"] or "").strip() or None
+        if tid:
+            teacher = await db.users.find_one({"id": tid, "role": "teacher"})
+            if not teacher:
+                raise HTTPException(status_code=404, detail="Assigned teacher not found")
+            update["teacher_id"] = tid
+            update["teacher_name"] = teacher.get("name")
+        else:
+            update["teacher_id"] = None
+            update["teacher_name"] = None
 
     res = await db.students.update_one({"id": student_id}, {"$set": update})
     if res.matched_count == 0:

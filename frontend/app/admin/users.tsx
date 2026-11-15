@@ -166,7 +166,7 @@ export default function UserManagement() {
           <Muted style={{ fontSize: 12 }}>Manage logins & account access</Muted>
         </View>
       </View>
-      <TouchableOpacity testID="open-deletion-requests" onPress={() => router.push('/admin/deletion-requests')} style={styles.delLink}>
+      <TouchableOpacity testID="open-deletion-requests" onPress={() => router.push('/admin/deletion-requests' as any)} style={styles.delLink}>
         <Ionicons name="trash-bin-outline" size={18} color={colors.danger} />
         <Text style={styles.delLinkText}>Deletion requests</Text>
         <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />

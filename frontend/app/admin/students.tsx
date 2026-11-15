@@ -21,11 +21,15 @@ import { Button, Card, H2, H3, Muted } from '../../src/ui';
 import { colors, radii, spacing } from '../../src/theme';
 import { AddStudentModal, LoginFields, loginInputError, PlanFields, PlanType, validatePlanInput } from '../../src/components/StudentForm';
 
+type TeacherOption = { id: string; name: string; class_name?: string | null };
+
 type Student = {
   id: string;
   name: string;
   class_name: string;
   parent_phone: string;
+  teacher_id?: string | null;
+  teacher_name?: string | null;
   age?: number;
   total_fees?: number | null;
   plan_type?: 'single' | 'term' | null;
@@ -39,6 +43,7 @@ export default function AdminStudents() {
   const { user } = useAuth();
   const isMD = user?.role === 'md';
   const [items, setItems] = useState<Student[]>([]);
+  const [teachers, setTeachers] = useState<TeacherOption[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
   // Add-student modal state
@@ -58,10 +63,19 @@ export default function AdminStudents() {
   const [pTerms, setPTerms] = useState<[string, string, string]>(['', '', '']);
   const [pSaving, setPSaving] = useState(false);
 
+  // Assign-teacher modal state
+  const [teacherStudent, setTeacherStudent] = useState<Student | null>(null);
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string>('');
+  const [tSaving, setTSaving] = useState(false);
+
   const load = useCallback(async () => {
     try {
-      const s = await api<Student[]>('/students');
+      const [s, t] = await Promise.all([
+        api<Student[]>('/students'),
+        api<TeacherOption[]>('/teachers').catch(() => [] as TeacherOption[]),
+      ]);
       setItems(s);
+      setTeachers(t);
     } catch {}
   }, []);
 
@@ -134,6 +148,28 @@ export default function AdminStudents() {
     }
   }
 
+  function openAssignTeacher(s: Student) {
+    setTeacherStudent(s);
+    setSelectedTeacherId(s.teacher_id || '');
+  }
+
+  async function saveAssignTeacher() {
+    if (!teacherStudent) return;
+    setTSaving(true);
+    try {
+      await api(`/students/${teacherStudent.id}`, {
+        method: 'PUT',
+        body: { teacher_id: selectedTeacherId || null },
+      });
+      setTeacherStudent(null);
+      await load();
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Could not assign teacher');
+    } finally {
+      setTSaving(false);
+    }
+  }
+
   async function deleteStudent(s: Student) {
     Alert.alert('Delete student?', `Remove ${s.name}?`, [
       { text: 'Cancel', style: 'cancel' },
@@ -202,6 +238,25 @@ export default function AdminStudents() {
                   <Muted style={{ fontSize: 12 }}>
                     {item.class_name} · +91 {item.parent_phone}
                   </Muted>
+                  {item.teacher_name ? (
+                    <TouchableOpacity
+                      disabled={!isMD}
+                      onPress={() => openAssignTeacher(item)}
+                      style={styles.planTag}
+                    >
+                      <Ionicons name="person" size={11} color={colors.primary} />
+                      <Text style={styles.planTagText}>Teacher: {item.teacher_name}</Text>
+                    </TouchableOpacity>
+                  ) : isMD ? (
+                    <TouchableOpacity
+                      testID={`assignteacher-${item.id}`}
+                      onPress={() => openAssignTeacher(item)}
+                      style={styles.setPlanBtn}
+                    >
+                      <Ionicons name="person-add-outline" size={13} color={colors.golden} />
+                      <Text style={styles.setPlanText}>Assign teacher</Text>
+                    </TouchableOpacity>
+                  ) : null}
                   {hasPlan ? (
                     <View style={styles.planTag}>
                       <Ionicons name="pricetag" size={11} color={colors.primary} />
@@ -234,6 +289,50 @@ export default function AdminStudents() {
       />
 
       <AddStudentModal visible={showAdd} onClose={() => setShowAdd(false)} onSaved={load} />
+
+      {/* Assign Teacher Modal */}
+      <Modal visible={!!teacherStudent} animationType="slide" transparent onRequestClose={() => setTeacherStudent(null)}>
+        <View style={styles.modalBg}>
+          <ScrollView contentContainerStyle={{ padding: spacing.lg }}>
+            <Card>
+              <H3>Assign Teacher</H3>
+              <Muted style={{ marginTop: 4, marginBottom: spacing.md }}>
+                {teacherStudent?.name} · {teacherStudent?.class_name}
+              </Muted>
+              {teachers.length === 0 ? (
+                <Muted>No teachers created yet. Add a teacher in Setup first.</Muted>
+              ) : (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {teachers.map((t) => {
+                    const active = selectedTeacherId === t.id;
+                    return (
+                      <TouchableOpacity
+                        key={t.id}
+                        onPress={() => setSelectedTeacherId(active ? '' : t.id)}
+                        style={[
+                          styles.teacherChip,
+                          active && { backgroundColor: colors.primary, borderColor: colors.primary },
+                        ]}
+                      >
+                        <Ionicons
+                          name={active ? 'checkmark-circle' : 'person-outline'}
+                          size={15}
+                          color={active ? colors.inverse : colors.textSecondary}
+                        />
+                        <Text style={[styles.teacherChipText, active && { color: colors.inverse }]}>
+                          {t.name}{t.class_name ? ` (${t.class_name})` : ''}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+              <Button title="Save Teacher" onPress={saveAssignTeacher} loading={tSaving} style={{ marginTop: spacing.md }} />
+              <Button title="Cancel" variant="ghost" onPress={() => setTeacherStudent(null)} style={{ marginTop: 8 }} />
+            </Card>
+          </ScrollView>
+        </View>
+      </Modal>
 
       {/* Set Fee Plan for an existing student */}
       <Modal visible={!!planStudent} animationType="slide" transparent>
@@ -319,5 +418,17 @@ const styles = StyleSheet.create({
   planTagText: { fontSize: 11, color: colors.primary, fontWeight: '700' },
   setPlanBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
   setPlanText: { fontSize: 12, color: colors.golden, fontWeight: '700' },
+  teacherChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radii.pill,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  teacherChipText: { fontSize: 13, fontWeight: '600', color: colors.text },
   modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
 });
